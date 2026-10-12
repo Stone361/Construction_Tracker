@@ -1,5 +1,7 @@
 package com.example.constructiontracker.exception;
 
+import com.example.constructiontracker.auth.AuthenticationInterceptor;
+import com.example.constructiontracker.auth.HeaderIdentityParser;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -33,7 +35,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(GlobalExceptionHandlerTests.ErrorTestController.class)
-@Import({GlobalExceptionHandler.class, GlobalExceptionHandlerTests.ErrorTestController.class})
+@Import({GlobalExceptionHandler.class, GlobalExceptionHandlerTests.ErrorTestController.class,
+        AuthenticationInterceptor.class, HeaderIdentityParser.class})
 class GlobalExceptionHandlerTests {
 
     @Autowired

@@ -89,7 +89,7 @@ Flyway 已禁用 `clean` 和自动 `baseline`，启用迁移校验，关闭 Spri
 
 ```bash
 ./mvnw test
-# 默认：19 项框架测试（H2 / MVC，关闭 Flyway），7 项 MySQL 集成测试跳过
+# 默认：129 项测试，122 项通过，7 项 MySQL 集成测试跳过；框架测试使用 H2 / MVC
 
 docker compose up -d --wait
 ./mvnw -Dmysql.integration=true -Dtest=MySqlMigrationTests test
@@ -159,7 +159,17 @@ throw new BusinessException(HttpStatus.CONFLICT, "STAGE_CONFLICT", "房屋阶段
 
 调用者会收到 HTTP 409 和 `{"code":"STAGE_CONFLICT","message":"房屋阶段已更新，请刷新后重试"}`。未知服务器异常统一返回 HTTP 500 和通用提示，详细异常仅写入服务端日志。
 
-[错误响应测试](./src/test/java/com/example/constructiontracker/exception/GlobalExceptionHandlerTests.java) 使用 MVC 测试验证状态码、JSON 格式、校验消息和响应头，不需要数据库。上传超限测试验证异常到 HTTP 413 的映射；实际文件类型与 10 MB 边界校验仍在照片上传步骤中实现。当前提供统一错误处理机制，身份鉴权、阶段推进等业务规则仍待实现。
+[错误响应测试](./src/test/java/com/example/constructiontracker/exception/GlobalExceptionHandlerTests.java) 使用 MVC 测试验证状态码、JSON 格式、校验消息和响应头，不需要数据库。上传超限测试验证异常到 HTTP 413 的映射；实际文件类型与 10 MB 边界校验仍在照片上传步骤中实现。当前已接入请求头认证异常的401映射，角色与社区授权复用业务异常返回403；阶段推进等业务规则仍待实现。
+
+### 第三阶段：请求头认证与角色社区授权
+
+已实现 UserRole、不可变 UserIdentity、HeaderIdentityParser、AuthenticationInterceptor、WebMvcConfig、RequestIdentity 和 AuthorizationService。MVC 拦截器只覆盖 `/api/**`，认证成功后将身份存入请求 attribute，不使用 ThreadLocal、Session 或 Spring Security；`/actuator/health` 不需要身份。Controller 后续可通过 `RequestIdentity.get(request)` 获取身份，再传给业务 Service。
+
+`requireAdmin` 仅允许 ADMIN；`requireCanManageHouse` 允许 ADMIN 管理所有社区、SITE_MANAGER 管理严格同名社区，拒绝 VIEWER 和现场负责人对空目标社区的操作。社区判断区分大小写，不模糊匹配。目标房屋社区必须由未来业务 Service 从数据库读取，不能使用客户端参数。
+
+第三阶段验收的默认测试为129项（122通过、0失败、7项默认跳过），另行运行的7项 MySQL 隔离测试全部通过。在8081启动当前版本进行真实 HTTP 验证：无身份健康接口200，无身份 `/api/houses` 为401，合法 ADMIN 为404，非法角色为401。404不是认证成功的单独证据，认证成功及身份传递同时由 MockMvc 断言验证。正式房屋 API 尚未开发，没有为验收新增生产接口。
+
+验收记录与真实 AI 错误说明见 [第三阶段 AI 使用摘要](./docs/ai-log/2026-10-12-stage-3.md)，请求、响应体及关键响应头见 [HTTP 验收 JSON](./docs/verification/2026-10-12-stage-3-http.json)。用户已授权在提交前检查和测试通过后提交第三阶段；该授权不代表已完成正式人工代码审查，摘要不替代完整 AI 对话导出。
 
 ## 3. 数据获取与导入
 
@@ -288,13 +298,13 @@ LAND_CLEARING → FOUNDATION → FRAMING → MEP → INTERIOR → CO_READY
 
 - [ ] `docker compose up -d` 可启动 MySQL，应用可连接。
 - [ ] `./mvnw spring-boot:run` 可在 8080 启动。
-- [ ] `./mvnw test` 一次通过，测试运行方式已记录。
+- [x] `./mvnw test` 一次通过，测试运行方式已记录。
 - [ ] 至少 200 条真实公开数据可重复导入，且通过 `POST /api/houses`。
 - [ ] 缺失坐标、重复许可证、重复照片均有测试和明确行为。
 - [ ] 六个阶段只能按顺序单步推进，阶段推进具备并发保护。
 - [ ] JPEG/PNG/WebP、10 MB、真实文件类型和 EXIF 规则均已覆盖。
 - [ ] `VERIFIED`、`SUSPECT`、`UNKNOWN`、时区和业务日规则正确。
-- [ ] `ADMIN`、`SITE_MANAGER`、`VIEWER`、`401`、`403` 已测试。
+- [x] `ADMIN`、`SITE_MANAGER`、`VIEWER`、`401`、`403` 已测试。
 - [ ] 地图列表没有 N+1 查询。
 - [ ] 提交记录不少于 8 次，AI 日志和数据脚本已提交，未提交原始大文件。
 - [ ] README 已写明并发、去重、权限、时区、取舍、未完成项和 AI 修正案例。
@@ -306,9 +316,10 @@ LAND_CLEARING → FOUNDATION → FRAMING → MEP → INTERIOR → CO_READY
 | 项目 | 当前状态 | 后续处理 |
 | --- | --- | --- |
 | 真实数据与导入脚本 | 尚未导入200条真实记录 | 后续通过 POST /api/houses 导入，保存来源和获取时间 |
-| 业务模型、接口和权限 | 尚未实现 | 后续按推荐步骤实现，不在第二阶段提交中加入 |
+| 请求头认证与角色社区授权 | 组件和自动化验收完成，人工审查待确认 | 后续业务 Service 从数据库读取资源所属社区后调用授权组件 |
+| 房屋、照片等业务模型与接口 | 尚未实现 | 后续按推荐步骤实现 |
 | 照片、阶段推进与汇总 API | 只有数据库约束及 SQL 验证 | 后续补齐文件处理、事务、HTTP 与并发测试 |
-| AI 日志与最终交付说明 | 尚未整理 | 最终交付前补齐 docs/ai-log/ 和设计取舍说明 |
+| AI 日志与最终交付说明 | 已有第三阶段脱敏摘要 | 完整对话导出及至少两个真实 AI 不良建议和修正案例仍待整理 |
 
 ## 10. 题面来源
 

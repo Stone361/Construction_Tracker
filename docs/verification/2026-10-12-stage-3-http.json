@@ -1,0 +1,106 @@
+{
+  "captured_at": "2026-10-12T22:45:46+08:00",
+  "base_url": "http://127.0.0.1:8081",
+  "startup_command": "./mvnw spring-boot:run -Dspring-boot.run.arguments=--server.port=8081",
+  "cases": [
+    {
+      "name": "health_no_identity",
+      "method": "GET",
+      "path": "/actuator/health",
+      "request_headers": {},
+      "status": 200,
+      "reason": "",
+      "response_headers": {
+        "Content-Type": "application/vnd.spring-boot.actuator.v3+json",
+        "Content-Length": null,
+        "Transfer-Encoding": "chunked",
+        "WWW-Authenticate": null,
+        "Cache-Control": null,
+        "Vary": null
+      },
+      "body": "{\"status\":\"UP\"}",
+      "json_body": {
+        "status": "UP"
+      },
+      "expected_status": 200,
+      "passed": true
+    },
+    {
+      "name": "houses_no_identity",
+      "method": "GET",
+      "path": "/api/houses",
+      "request_headers": {},
+      "status": 401,
+      "reason": "",
+      "response_headers": {
+        "Content-Type": "application/json",
+        "Content-Length": null,
+        "Transfer-Encoding": "chunked",
+        "WWW-Authenticate": null,
+        "Cache-Control": null,
+        "Vary": "Origin, Access-Control-Request-Method, Access-Control-Request-Headers"
+      },
+      "body": "{\"code\":\"UNAUTHORIZED\",\"message\":\"X-User 不能为空或仅包含空白\"}",
+      "json_body": {
+        "code": "UNAUTHORIZED",
+        "message": "X-User 不能为空或仅包含空白"
+      },
+      "expected_status": 401,
+      "passed": true
+    },
+    {
+      "name": "houses_valid_admin",
+      "method": "GET",
+      "path": "/api/houses",
+      "request_headers": {
+        "X-User": "stage3-acceptance",
+        "X-Role": "ADMIN"
+      },
+      "status": 404,
+      "reason": "",
+      "response_headers": {
+        "Content-Type": "application/json",
+        "Content-Length": null,
+        "Transfer-Encoding": "chunked",
+        "WWW-Authenticate": null,
+        "Cache-Control": null,
+        "Vary": "Origin, Access-Control-Request-Method, Access-Control-Request-Headers"
+      },
+      "body": "{\"code\":\"NOT_FOUND\",\"message\":\"请求的资源不存在\"}",
+      "json_body": {
+        "code": "NOT_FOUND",
+        "message": "请求的资源不存在"
+      },
+      "expected_status": 404,
+      "passed": true
+    },
+    {
+      "name": "houses_invalid_role",
+      "method": "GET",
+      "path": "/api/houses",
+      "request_headers": {
+        "X-User": "stage3-acceptance",
+        "X-Role": "OWNER"
+      },
+      "status": 401,
+      "reason": "",
+      "response_headers": {
+        "Content-Type": "application/json",
+        "Content-Length": null,
+        "Transfer-Encoding": "chunked",
+        "WWW-Authenticate": null,
+        "Cache-Control": null,
+        "Vary": "Origin, Access-Control-Request-Method, Access-Control-Request-Headers"
+      },
+      "body": "{\"code\":\"UNAUTHORIZED\",\"message\":\"X-Role 必须是 ADMIN、SITE_MANAGER 或 VIEWER\"}",
+      "json_body": {
+        "code": "UNAUTHORIZED",
+        "message": "X-Role 必须是 ADMIN、SITE_MANAGER 或 VIEWER"
+      },
+      "expected_status": 401,
+      "passed": true
+    }
+  ],
+  "all_passed": true,
+  "interpretation": "The ADMIN 404 is combined with MockMvc identity-attribute assertions; 404 alone is not proof of successful authentication."
+}
