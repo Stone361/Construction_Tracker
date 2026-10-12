@@ -1,6 +1,11 @@
 spring:
+  flyway:
+    # Framework smoke tests use H2; MySQL DDL is verified separately on MySQL 8.
+    enabled: false
   datasource:
     url: jdbc:h2:mem:construction_tracker_test;MODE=MySQL;DB_CLOSE_DELAY=-1
     username: sa
     password: ""
     driver-class-name: org.h2.Driver
+    hikari:
+      connection-init-sql: ""

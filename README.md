@@ -22,7 +22,7 @@
 
 当前工程使用 **Java 21 + Spring Boot 3.5.16 + MyBatis Starter 3.0.5**，已包含 Spring Web、Validation、Actuator、MySQL JDBC 驱动和测试依赖。Maven Wrapper 会自动下载 Maven，无需单独安装 Maven 或 Spring Boot CLI；首次运行需要联网下载构建工具和依赖。
 
-在项目根目录执行：
+在项目根目录执行（启动数据库前先按下节准备 `.env`）：
 
 ```bash
 ./mvnw test                 # 使用测试专用 H2，验证启动、健康检查及 MyBatis XML SQL
@@ -32,7 +32,14 @@ docker compose up -d       # 启动 MySQL 8.4.11
 
 ### MySQL 与 Docker
 
-正常运行使用 Docker Desktop 自带的 Docker Engine 和 Compose。先启动 Docker Desktop，等待引擎就绪，再运行项目命令。当前机器的本地 `.env` 已生成独立的随机应用密码和 root 密码；新机器首次使用时，复制 [.env.example](./.env.example) 为 `.env` 并替换其中两个密码。
+正常运行使用 Docker Desktop 自带的 Docker Engine 和 Compose。先启动 Docker Desktop，等待引擎就绪，再运行项目命令。新机器首次使用时，复制 [.env.example](./.env.example) 为 `.env`，将 `CHANGE_ME_APP_PASSWORD` 和 `CHANGE_ME_ROOT_PASSWORD` 分别替换为两个不同的随机密码；建议使用不带引号的随机十六进制字符串。已有 `.env` 时保留原文件，不覆盖已有数据库凭据：
+
+```bash
+cp -n .env.example .env     # 仅首次配置；不会覆盖已有 .env
+# 在本地编辑 .env，替换两个 CHANGE_ME_* 占位符后再启动数据库
+```
+
+`DB_USERNAME`、`DB_PASSWORD` 对应应用账号，`MYSQL_ROOT_PASSWORD` 对应 root；Spring Boot 使用应用账号。`.env.example` 仅提供占位符，实际 `.env` 被 Git 忽略，不应提交或将密码写入命令行。
 
 [docker-compose.yml](./docker-compose.yml) 使用官方 `mysql:8.4.11` 镜像，首次启动自动创建 `construction_tracker` 数据库和同名应用用户。服务仅向本机开放 `127.0.0.1:3306`，数据库字符集为 `utf8mb4`，时区为 UTC，数据保存在命名卷 `mysql-data`。
 
@@ -64,6 +71,51 @@ curl http://localhost:8080/actuator/health
 
 健康检查现在包含数据库状态；MySQL 未启动、数据库不存在或账号配置错误时，可能返回 HTTP 503 和 `{"status":"DOWN"}`。
 
+### 第二阶段：Flyway 与业务表
+
+已接入 `flyway-core` 和 `flyway-mysql`，版本由 Spring Boot 管理。执行 `./mvnw spring-boot:run` 时，Flyway 自动运行 [V1 建表迁移](./src/main/resources/db/migration/V1__create_construction_tracker_tables.sql)，创建业务表和 `flyway_schema_history`。成功的 V1 记录应为 `version = '1'`、`success = 1`。再次启动只校验已执行迁移；后续结构变化新增 V2/V3，不修改已执行的 V1。
+
+| 表 | 用途与关键约束 |
+| --- | --- |
+| `house` | 房屋、社区、当前阶段、封面、公开数据来源与获取时间；`permit_no` 全局唯一，坐标只能同时为空或同时有效 |
+| `photo` | 照片文件元数据、上传时阶段、UTC 时间、美国中部业务日和定位状态；`house_id + content_hash`（SHA-256）唯一，复合外键保证封面属于当前房屋 |
+| `stage_history` | 成功推进的操作人、UTC 时刻及前后阶段；只允许相邻阶段推进，同一房屋的起始阶段唯一 |
+
+表使用 InnoDB；主键、唯一键、外键和 CHECK 约束通过 V1 建立。缺坐标记录可以保留，后续地图范围查询排除空坐标；无法计算照片距离时使用 `UNKNOWN`。`DATETIME(6)` 约定存 UTC，连接池会话固定 `+00:00`，业务日按 `America/Chicago` 计算。文件大小采用十进制 10 MB，即不超过 **10,000,000 字节**；HTTP 内容识别与上传接口仍待实现。
+
+Flyway 已禁用 `clean` 和自动 `baseline`，启用迁移校验，关闭 Spring 的 `schema.sql`/`data.sql` 初始化。保留现有 Docker 数据卷，不挂载另一套首启 SQL；发现未纳管的非空库时停止迁移，先核对已有结构。当前本机正式库已成功执行 V1，三张业务表已创建。
+
+### 数据库测试与只读验证
+
+```bash
+./mvnw test
+# 默认：19 项框架测试（H2 / MVC，关闭 Flyway），7 项 MySQL 集成测试跳过
+
+docker compose up -d --wait
+./mvnw -Dmysql.integration=true -Dtest=MySqlMigrationTests test
+# 可选：7 项 MySQL 集成测试使用 compose 中的 MySQL，不使用 Testcontainers
+```
+
+MySQL 集成测试从本地 `.env` 或环境变量读取 `MYSQL_ROOT_PASSWORD`，创建随机命名的 `construction_tracker_test_<随机值>` 隔离库，执行真实 V1。测试覆盖重复迁移保留数据、许可证唯一、照片去重、封面归属、坐标与大小约束、相邻推进，以及历史汇总和时区边界；结束时只清理本次创建的测试库，不操作正式库。该组测试此前已通过；默认测试命令不连接 MySQL，也不能替代这组集成测试。
+
+历史汇总的 SQL 验证见 [DatabaseSummaryVerification.xml](./src/test/resources/mapper/DatabaseSummaryVerification.xml)：只纳入 `created_at <= asOf` 的房屋，用查询时点之前最后一次阶段历史还原阶段；照片按 `uploaded_at <= asOf` 决定可见性，以 `MAX(business_date)` 计算最后照片日期并排除未来业务日。没有照片时从创建业务日起算，日差大于14才算陈旧。该 XML 仅用于测试，汇总 API 尚未实现。
+
+应用启动后检查健康状态及数据库结构：
+
+```bash
+curl http://localhost:8080/actuator/health
+docker compose exec mysql mysql --protocol=TCP -h 127.0.0.1 -u construction_tracker -p construction_tracker
+# 在提示处输入实际 .env 中的 DB_PASSWORD；然后在 MySQL 客户端执行以下只读 SQL
+```
+
+```sql
+SHOW TABLES;
+SHOW CREATE TABLE house;
+SHOW CREATE TABLE photo;
+SHOW CREATE TABLE stage_history;
+SELECT version, script, success FROM flyway_schema_history ORDER BY installed_rank;
+```
+
 ### MyBatis 使用约定
 
 - Mapper 接口放在 `com.example.constructiontracker` 的子包中，并标注 `@Mapper`，由 Starter 自动扫描。
@@ -71,7 +123,7 @@ curl http://localhost:8080/actuator/health
 - XML 的 `namespace` 必须是 Mapper 接口全限定名，语句 `id` 与方法名一致，参数使用 `#{参数名}` 绑定。
 - 可参考测试中的 [Mapper 接口](./src/test/java/com/example/constructiontracker/mapper/MyBatisSmokeMapper.java) 和 [XML 映射](./src/test/resources/mapper/MyBatisSmokeMapper.xml)。这些示例仅参与测试，不会打包到应用。
 
-当前已完成 Spring Boot 基础工程、MyBatis 接入及 MySQL Compose 配置，业务接口尚未实现。现有测试启用 `test` profile，使用测试范围的 H2 内存数据库及随机 HTTP 端口，不依赖本机 MySQL、Docker 或 Testcontainers。该测试只验证框架与 XML SQL 能正常工作；不能替代 MySQL 8 集成测试，后续接入业务时仍需明确使用 Testcontainers 或 compose 中的 MySQL。
+当前已完成 Spring Boot 基础工程、MyBatis 接入、MySQL Compose 配置和 Flyway V1 建表，业务接口尚未实现。默认框架测试启用 `test` profile，使用 H2 内存数据库及随机 HTTP 端口；MySQL 专用约束和迁移通过上面的隔离库集成测试验证。后续业务实现还需补充 HTTP 接口、权限和并发测试。
 
 ### 基础目录结构
 
@@ -89,7 +141,7 @@ Java 主代码统一放在 `com.example.constructiontracker` 包下，各层职�
 | [src/main/resources/mapper](./src/main/resources/mapper/) | 保存 MyBatis XML，所有 SQL 写在这里 |
 | [src/test](./src/test/) | 保存测试代码和测试配置 |
 
-调用顺序为 Controller → Service → Mapper；Mapper 接口关联 XML SQL。各 Java 分层目录通过 `package-info.java` 保留并说明职责。已建立目录和职责说明，并实现统一错误响应；业务模型、业务接口和数据库表仍待实现。
+调用顺序为 Controller → Service → Mapper；Mapper 接口关联 XML SQL。各 Java 分层目录通过 `package-info.java` 保留并说明职责。已建立目录和职责说明，并实现统一错误响应及数据库表；Java 业务模型和业务接口仍待实现。
 
 ### 统一错误响应（已实现）
 
@@ -110,6 +162,8 @@ throw new BusinessException(HttpStatus.CONFLICT, "STAGE_CONFLICT", "房屋阶段
 [错误响应测试](./src/test/java/com/example/constructiontracker/exception/GlobalExceptionHandlerTests.java) 使用 MVC 测试验证状态码、JSON 格式、校验消息和响应头，不需要数据库。上传超限测试验证异常到 HTTP 413 的映射；实际文件类型与 10 MB 边界校验仍在照片上传步骤中实现。当前提供统一错误处理机制，身份鉴权、阶段推进等业务规则仍待实现。
 
 ## 3. 数据获取与导入
+
+**当前尚未获取或导入不少于200条真实公开数据**，数据获取脚本和导入接口也尚未实现；数据库测试中的数据仅为测试夹具，不计入真实数据交付。
 
 ### 数据要求
 
@@ -251,7 +305,10 @@ LAND_CLEARING → FOUNDATION → FRAMING → MEP → INTERIOR → CO_READY
 
 | 项目 | 当前状态 | 后续处理 |
 | --- | --- | --- |
-| 示例 | 待填写 | 待填写 |
+| 真实数据与导入脚本 | 尚未导入200条真实记录 | 后续通过 POST /api/houses 导入，保存来源和获取时间 |
+| 业务模型、接口和权限 | 尚未实现 | 后续按推荐步骤实现，不在第二阶段提交中加入 |
+| 照片、阶段推进与汇总 API | 只有数据库约束及 SQL 验证 | 后续补齐文件处理、事务、HTTP 与并发测试 |
+| AI 日志与最终交付说明 | 尚未整理 | 最终交付前补齐 docs/ai-log/ 和设计取舍说明 |
 
 ## 10. 题面来源
 
