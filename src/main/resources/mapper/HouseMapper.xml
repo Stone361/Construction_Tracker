@@ -63,23 +63,41 @@
         FROM house WHERE permit_no = #{permitNo}
     </select>
 
-    <select id="findAll" resultMap="house">
-        SELECT id, permit_no, address, community, lat, lng, stage, cover_photo_id,
-               source_type, source_url, source_fetched_at, created_at,
-               created_business_date, created_by, updated_at
-        FROM house
+    <resultMap id="houseListRow" type="com.example.constructiontracker.domain.HouseListRow">
+        <constructor>
+            <idArg column="id" javaType="java.lang.Long"/>
+            <arg javaType="com.example.constructiontracker.domain.House" resultMap="house"/>
+            <arg column="last_photo_business_date" javaType="java.time.LocalDate"/>
+        </constructor>
+    </resultMap>
+
+    <select id="findAll" resultMap="houseListRow">
+        SELECT h.id, h.permit_no, h.address, h.community, h.lat, h.lng, h.stage, h.cover_photo_id,
+               h.source_type, h.source_url, h.source_fetched_at, h.created_at,
+               h.created_business_date, h.created_by, h.updated_at, p.last_photo_business_date
+        FROM house h
+        LEFT JOIN (
+            SELECT house_id, MAX(business_date) AS last_photo_business_date
+            FROM photo GROUP BY house_id
+        ) p ON p.house_id = h.id
         <where>
             <if test="query.minLng != null">
-                AND lat IS NOT NULL AND lng IS NOT NULL
-                AND lng BETWEEN #{query.minLng} AND #{query.maxLng}
-                AND lat BETWEEN #{query.minLat} AND #{query.maxLat}
+                AND h.lat IS NOT NULL AND h.lng IS NOT NULL
+                AND h.lng BETWEEN #{query.minLng} AND #{query.maxLng}
+                AND h.lat BETWEEN #{query.minLat} AND #{query.maxLat}
             </if>
             <if test="query.stage != null">
-                AND stage = #{query.stage}
+                AND h.stage = #{query.stage}
             </if>
         </where>
-        ORDER BY id ASC
+        ORDER BY h.id ASC
     </select>
+
+    <update id="updateCover">
+        UPDATE house
+        SET cover_photo_id = #{photoId}, updated_at = GREATEST(updated_at, #{updatedAt})
+        WHERE id = #{id}
+    </update>
 
     <insert id="insert">
         INSERT INTO house (permit_no, address, community, lat, lng, stage, source_type,

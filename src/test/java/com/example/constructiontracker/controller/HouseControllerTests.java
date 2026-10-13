@@ -8,6 +8,7 @@ import com.example.constructiontracker.domain.*;
 import com.example.constructiontracker.dto.HouseListQuery;
 import com.example.constructiontracker.exception.GlobalExceptionHandler;
 import com.example.constructiontracker.mapper.HouseMapper;
+import com.example.constructiontracker.mapper.PhotoMapper;
 import com.example.constructiontracker.service.AuthorizationService;
 import com.example.constructiontracker.service.HouseService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -49,6 +50,7 @@ class HouseControllerTests {
     @Autowired private MockMvc mvc;
     @Autowired private ObjectMapper json;
     @MockitoBean private HouseMapper mapper;
+    @MockitoBean private PhotoMapper photos;
 
     @ParameterizedTest
     @EnumSource(UserRole.class)
@@ -122,7 +124,8 @@ class HouseControllerTests {
         var noCoordinates = new House(2L, "P-2", "Address", "Other community", null, null,
                 ConstructionStage.LAND_CLEARING, null, HouseSourceType.MANUAL, null, null,
                 row.createdAt(), row.createdBusinessDate(), "alice", row.updatedAt());
-        when(mapper.findAll(any())).thenReturn(List.of(row, noCoordinates));
+        when(mapper.findAll(any())).thenReturn(List.of(new HouseListRow(row.id(), row, null),
+                new HouseListRow(noCoordinates.id(), noCoordinates, null)));
         var result = mvc.perform(get("/api/houses").header("X-User", "bob").header("X-Role", role.name())
                         .header("X-Community", "South Austin"))
                 .andExpect(status().isOk()).andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
@@ -144,7 +147,7 @@ class HouseControllerTests {
 
     @Test
     void bboxUsesLongitudeLatitudeOrderAndPassesBoundsToSql() throws Exception {
-        when(mapper.findAll(any())).thenReturn(List.of(house()));
+        when(mapper.findAll(any())).thenReturn(List.of(new HouseListRow(house().id(), house(), null)));
         mvc.perform(get("/api/houses").header("X-User", "alice").header("X-Role", "ADMIN")
                         .param("bbox", " -98, 29, -96, 31 "))
                 .andExpect(status().isOk()).andExpect(jsonPath("$[0].id").value(1));
@@ -171,7 +174,7 @@ class HouseControllerTests {
 
     @Test
     void originalCoordinateParametersQueryTheSameBounds() throws Exception {
-        when(mapper.findAll(any())).thenReturn(List.of(house()));
+        when(mapper.findAll(any())).thenReturn(List.of(new HouseListRow(house().id(), house(), null)));
         mvc.perform(get("/api/houses").header("X-User", "carol").header("X-Role", "VIEWER")
                         .param("minLat", "29").param("maxLat", "31")
                         .param("minLng", "-98").param("maxLng", "-96"))

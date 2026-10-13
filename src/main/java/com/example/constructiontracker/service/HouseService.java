@@ -2,14 +2,18 @@ package com.example.constructiontracker.service;
 
 import com.example.constructiontracker.domain.ConstructionStage;
 import com.example.constructiontracker.domain.House;
+import com.example.constructiontracker.domain.HouseListRow;
 import com.example.constructiontracker.domain.HouseSourceType;
 import com.example.constructiontracker.domain.UserIdentity;
 import com.example.constructiontracker.dto.CreateHouseRequest;
 import com.example.constructiontracker.dto.HouseDetailResponse;
 import com.example.constructiontracker.dto.HouseListQuery;
+import com.example.constructiontracker.dto.HouseResponse;
 import com.example.constructiontracker.dto.PhotoResponse;
+import com.example.constructiontracker.dto.SetCoverRequest;
 import com.example.constructiontracker.exception.BusinessException;
 import com.example.constructiontracker.mapper.HouseMapper;
+import com.example.constructiontracker.mapper.PhotoMapper;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotNull;
 import org.springframework.dao.DuplicateKeyException;
@@ -30,18 +34,44 @@ import java.util.List;
 public class HouseService {
     private static final ZoneId BUSINESS_ZONE = ZoneId.of("America/Chicago");
     private final HouseMapper mapper;
+    private final PhotoMapper photos;
     private final AuthorizationService authorization;
     private final Clock clock;
 
-    public HouseService(HouseMapper mapper, AuthorizationService authorization, Clock clock) {
+    public HouseService(HouseMapper mapper, PhotoMapper photos, AuthorizationService authorization, Clock clock) {
         this.mapper = mapper;
+        this.photos = photos;
         this.authorization = authorization;
         this.clock = clock;
     }
 
     /** 所有已认证角色可读全部社区；SQL 完成过滤和排序，不按房屋逐条查询。 */
     public List<House> list(@NotNull HouseListQuery query) {
-        return mapper.findAll(query);
+        return mapper.findAll(query).stream().map(HouseListRow::house).toList();
+    }
+
+    /** 房屋及照片业务日由同一次 SQL 读取，生成 URL 不查询文件或逐栋查询照片。 */
+    public List<HouseResponse> listResponses(@NotNull HouseListQuery query) {
+        return mapper.findAll(query).stream().map(HouseResponse::from).toList();
+    }
+
+    public HouseDetailResponse setCover(Long id, @NotNull @Valid SetCoverRequest request, UserIdentity identity) {
+        if (id == null || id <= 0) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "房屋 ID 必须为正整数");
+        }
+        House house = mapper.findById(id);
+        if (house == null) {
+            throw new BusinessException(HttpStatus.NOT_FOUND, "NOT_FOUND", "房屋不存在");
+        }
+        authorization.requireCanManageHouse(identity, house.community());
+        if (photos.findFile(id, request.photoId()) == null) {
+            throw new BusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "BUSINESS_RULE_VIOLATION",
+                    "照片不存在或不属于该房屋");
+        }
+        LocalDateTime utc = LocalDateTime.ofInstant(clock.instant().truncatedTo(ChronoUnit.MICROS), ZoneOffset.UTC);
+        // 同一封面重复设置可能没有实际字段变化，不能把影响行数为 0 误判为归属失败。
+        mapper.updateCover(id, request.photoId(), utc);
+        return detail(id);
     }
 
     /** 固定两次读取，全部角色可跨社区查看；照片排序由 SQL 完成。 */

@@ -1,6 +1,7 @@
 package com.example.constructiontracker.database;
 
 import com.example.constructiontracker.domain.House;
+import com.example.constructiontracker.domain.HouseListRow;
 import com.example.constructiontracker.domain.PhotoMetadata;
 import com.example.constructiontracker.domain.ConstructionStage;
 import com.example.constructiontracker.domain.HouseSourceType;
@@ -143,7 +144,7 @@ class MySqlHouseCreationTests {
         var session = new SqlSessionTemplate(new SqlSessionFactoryBuilder().build(configuration));
         mapper = session.getMapper(HouseMapper.class);
         photos = session.getMapper(PhotoMapper.class);
-        service = new HouseService(mapper, new AuthorizationService(), CLOCK);
+        service = new HouseService(mapper, photos, new AuthorizationService(), CLOCK);
     }
 
     @AfterAll
@@ -499,7 +500,12 @@ class MySqlHouseCreationTests {
             public int insert(House house) { return mapper.insert(house); }
 
             @Override
-            public List<House> findAll(HouseListQuery query) { return mapper.findAll(query); }
+            public List<HouseListRow> findAll(HouseListQuery query) { return mapper.findAll(query); }
+
+            @Override
+            public int updateCover(Long id, Long photoId, LocalDateTime updatedAt) {
+                return mapper.updateCover(id, photoId, updatedAt);
+            }
 
             @Override
             public House findById(Long id) { return mapper.findById(id); }
@@ -507,7 +513,7 @@ class MySqlHouseCreationTests {
             @Override
             public List<PhotoMetadata> findPhotosByHouseId(Long houseId) { return mapper.findPhotosByHouseId(houseId); }
         };
-        var racingService = new HouseService(racingMapper, new AuthorizationService(), CLOCK);
+        var racingService = new HouseService(racingMapper, photos, new AuthorizationService(), CLOCK);
         try (var executor = Executors.newFixedThreadPool(2)) {
             var first = executor.submit(() -> racingService.create(request("mysql-race", null, null), ADMIN));
             var second = executor.submit(() -> racingService.create(request("mysql-race", null, null), ADMIN));

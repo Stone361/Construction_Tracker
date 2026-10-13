@@ -10,6 +10,7 @@ import com.example.constructiontracker.dto.CreateHouseRequest;
 import com.example.constructiontracker.exception.AuthenticationException;
 import com.example.constructiontracker.exception.BusinessException;
 import com.example.constructiontracker.mapper.HouseMapper;
+import com.example.constructiontracker.mapper.PhotoMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -196,7 +197,8 @@ class HouseServiceTests {
     }
 
     private HouseService serviceAt(String instant) {
-        return new HouseService(mapper, new AuthorizationService(), Clock.fixed(Instant.parse(instant), ZoneOffset.UTC));
+        return new HouseService(mapper, mock(PhotoMapper.class), new AuthorizationService(),
+                Clock.fixed(Instant.parse(instant), ZoneOffset.UTC));
     }
 
     private House savedHouse() {
