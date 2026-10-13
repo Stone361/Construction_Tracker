@@ -18,6 +18,7 @@ except ImportError:  # Direct execution: python3 scripts/import_austin_houses.py
 
 ROOT = Path(__file__).resolve().parents[1]
 PAYLOAD_FIELDS = {"permitNo", "address", "community", "lat", "lng", "sourceUrl", "sourceFetchedAt"}
+PHOTO_DERIVED_FIELDS = {"coverPhotoUrl", "lastPhotoBusinessDate"}
 
 
 def load_records(path):
@@ -122,6 +123,13 @@ def payload_differences(payload, response):
     return differences
 
 
+def same_house_response(left, right):
+    """POST omits current photo values; retain every other response field."""
+    return isinstance(right, dict) and (
+        {k: v for k, v in left.items() if k not in PHOTO_DERIVED_FIELDS}
+        == {k: v for k, v in right.items() if k not in PHOTO_DERIVED_FIELDS})
+
+
 def import_records(client, rows):
     before = index_houses(client)
     results, failures = [], []
@@ -135,7 +143,7 @@ def import_records(client, rows):
             if fields:
                 raise ValueError("Stored fields differ from input: " + ",".join(fields))
             original = before.get(row["permitNo"])
-            if original is not None and (status != 200 or response != original):
+            if original is not None and (status != 200 or not same_house_response(response, original)):
                 raise ValueError("Existing record was not preserved")
             if status == 201 and (response.get("stage") != "LAND_CLEARING" or response.get("sourceType") != "PUBLIC_DATA"):
                 raise ValueError("Unexpected new house stage/sourceType")
@@ -157,7 +165,8 @@ def import_records(client, rows):
             if fields:
                 differences.append({"permitNo": row["permitNo"], "fields": fields})
     changed = [permit for permit, house in before.items() if after.get(permit) != house]
-    inconsistent_responses = [r["house"]["permitNo"] for r in results if after.get(r["house"]["permitNo"]) != r["house"]]
+    inconsistent_responses = [r["house"]["permitNo"] for r in results
+                              if not same_house_response(r["house"], after.get(r["house"]["permitNo"]))]
     verification = {"matched": len(rows) - len(missing) - len(differences), "missing": missing,
                     "differences": differences, "preexistingChanged": changed,
                     "postResponseDifferences": inconsistent_responses,

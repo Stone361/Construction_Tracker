@@ -41,6 +41,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /** 真实认证、授权、创建服务及请求校验；只替换数据库 Mapper。 */
@@ -52,6 +53,79 @@ class HouseControllerTests {
     @Autowired private ObjectMapper json;
     @MockitoBean private HouseMapper mapper;
     @MockitoBean private PhotoMapper photos;
+
+    @ParameterizedTest
+    @EnumSource(value = UserRole.class, names = {"ADMIN", "SITE_MANAGER"})
+    void authorizedUsersSetCoverAndReceiveUpdatedDetail(UserRole role) throws Exception {
+        House original = house();
+        House covered = new House(original.id(), original.permitNo(), original.address(), original.community(),
+                original.lat(), original.lng(), original.stage(), 7L, original.sourceType(), original.sourceUrl(),
+                original.sourceFetchedAt(), original.createdAt(), original.createdBusinessDate(),
+                original.createdBy(), original.updatedAt());
+        when(mapper.findById(1L)).thenReturn(original, covered);
+        when(photos.findFile(1L, 7L)).thenReturn(new PhotoFile("photo.jpg", "image/jpeg", 100L));
+        when(mapper.updateCover(eq(1L), eq(7L), any())).thenReturn(1);
+        when(mapper.findPhotosByHouseId(1L)).thenReturn(List.of());
+
+        mvc.perform(put("/api/houses/1/cover").header("X-User", "cover-user").header("X-Role", role.name())
+                        .header("X-Community", "North Austin").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"photoId\":7}"))
+                .andExpect(status().isOk())
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.id").value(1)).andExpect(jsonPath("$.coverPhotoId").value(7));
+        verify(photos).findFile(1L, 7L);
+        verify(mapper).updateCover(eq(1L), eq(7L), any());
+    }
+
+    @Test
+    void repeatedCoverSettingReturns200EvenWhenUpdateChangesNoRows() throws Exception {
+        House original = house();
+        House covered = new House(original.id(), original.permitNo(), original.address(), original.community(),
+                original.lat(), original.lng(), original.stage(), 7L, original.sourceType(), original.sourceUrl(),
+                original.sourceFetchedAt(), original.createdAt(), original.createdBusinessDate(),
+                original.createdBy(), original.updatedAt());
+        when(mapper.findById(1L)).thenReturn(original, covered, covered, covered);
+        when(photos.findFile(1L, 7L)).thenReturn(new PhotoFile("photo.jpg", "image/jpeg", 100L));
+        when(mapper.updateCover(eq(1L), eq(7L), any())).thenReturn(1, 0);
+        when(mapper.findPhotosByHouseId(1L)).thenReturn(List.of());
+
+        for (int attempt = 0; attempt < 2; attempt++) {
+            mvc.perform(put("/api/houses/1/cover").header("X-User", "cover-user").header("X-Role", "ADMIN")
+                            .contentType(MediaType.APPLICATION_JSON).content("{\"photoId\":7}"))
+                    .andExpect(status().isOk()).andExpect(jsonPath("$.coverPhotoId").value(7));
+        }
+        verify(mapper, times(2)).updateCover(eq(1L), eq(7L), any());
+    }
+
+    @Test
+    void photoOutsideTargetHouseReturns422WithoutChangingCover() throws Exception {
+        when(mapper.findById(1L)).thenReturn(house());
+        // Photo 7 exists for another house; the target-house lookup must not use it.
+        when(photos.findFile(2L, 7L)).thenReturn(new PhotoFile("other.jpg", "image/jpeg", 100L));
+
+        mvc.perform(put("/api/houses/1/cover").header("X-User", "cover-user").header("X-Role", "ADMIN")
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"photoId\":7}"))
+                .andExpect(status().isUnprocessableEntity())
+                .andExpect(jsonPath("$.code").value("BUSINESS_RULE_VIOLATION"));
+        verify(photos).findFile(1L, 7L);
+        verifyNoMoreInteractions(photos);
+        verify(mapper, never()).updateCover(any(), any(), any());
+        verify(mapper, never()).findPhotosByHouseId(any());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"VIEWER,North Austin", "SITE_MANAGER,South Austin"})
+    void forbiddenUsersCannotSetCoverEvenWithClientCommunityParameter(String role, String community) throws Exception {
+        when(mapper.findById(1L)).thenReturn(house());
+        mvc.perform(put("/api/houses/1/cover").header("X-User", "cover-user").header("X-Role", role)
+                        .header("X-Community", community).param("community", community)
+                        .contentType(MediaType.APPLICATION_JSON).content("{\"photoId\":7}"))
+                .andExpect(status().isForbidden()).andExpect(jsonPath("$.code").value("FORBIDDEN"))
+                .andExpect(jsonPath("$.message").value("没有操作权限"));
+        verifyNoInteractions(photos);
+        verify(mapper, never()).updateCover(any(), any(), any());
+        verify(mapper, never()).findPhotosByHouseId(any());
+    }
 
     @ParameterizedTest
     @EnumSource(UserRole.class)

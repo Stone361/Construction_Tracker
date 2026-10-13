@@ -35,20 +35,25 @@ class FakeApi:
             return 200, deepcopy(list(self.houses.values()))
         self.posts.append(deepcopy(payload))
         if payload["permitNo"] in self.houses:
-            return 200, deepcopy(self.houses[payload["permitNo"]])
+            # Production creation responses don't include the list's photo aggregates.
+            response = deepcopy(self.houses[payload["permitNo"]])
+            response.update(coverPhotoUrl=None, lastPhotoBusinessDate=None)
+            return 200, response
         self.houses[payload["permitNo"]] = house(payload, len(self.houses) + 1)
         return 201, deepcopy(self.houses[payload["permitNo"]])
 
 
 class ImportTests(unittest.TestCase):
     def test_first_and_second_import_preserve_all_fields_and_ids(self):
-        rows = [ROW, {**ROW, "permitNo": "2026-129377 BP"}]
+        rows = [ROW] + [{**ROW, "permitNo": f"TEST-{i} BP"} for i in range(1, 200)]
         client = FakeApi()
         first = import_records(client, rows)
         baseline = deepcopy(client.houses)
         second = import_records(client, rows)
-        self.assertEqual((first["created"], first["existing"], first["failed"]), (2, 0, 0))
-        self.assertEqual((second["created"], second["existing"], second["failed"]), (0, 2, 0))
+        self.assertEqual((first["created"], first["existing"], first["failed"]), (200, 0, 0))
+        self.assertEqual((second["created"], second["existing"], second["failed"]), (0, 200, 0))
+        self.assertEqual(first["verification"]["matched"], 200)
+        self.assertEqual(second["verification"]["matched"], 200)
         self.assertEqual(second["verification"]["totalBefore"], second["verification"]["totalAfter"])
         self.assertEqual(client.houses, baseline)
         self.assertTrue(first["passed"] and second["passed"])
@@ -66,12 +71,69 @@ class ImportTests(unittest.TestCase):
         self.assertEqual(client.houses["UNRELATED"], unrelated)
 
     def test_existing_conflict_is_reported_without_overwriting(self):
-        existing = {**house(ROW), "address": "Original address"}
-        client = FakeApi([existing])
-        result = import_records(client, [ROW])
-        self.assertFalse(result["passed"])
-        self.assertEqual(result["failed"], 1)
-        self.assertEqual(client.houses[ROW["permitNo"]], existing)
+        for field, value in [("address", "Original address"), ("community", "Other community"),
+                             ("lat", 31), ("lng", -98),
+                             ("sourceUrl", "https://data.austintexas.gov/other-record"),
+                             ("sourceFetchedAt", "2026-01-01T00:00:00Z")]:
+            with self.subTest(field=field):
+                existing = {**house(ROW), field: value}
+                client = FakeApi([existing])
+                result = import_records(client, [ROW, {**ROW, "permitNo": "NOT-ATTEMPTED"}])
+                self.assertFalse(result["passed"])
+                self.assertEqual(result["failed"], 1)
+                self.assertEqual(result["unattempted"], 1)
+                self.assertEqual(client.posts, [ROW])
+                self.assertEqual(client.houses, {ROW["permitNo"]: existing})
+
+    def test_reimport_200_houses_with_photos_preserves_existing_business_state(self):
+        rows = [{**ROW, "permitNo": f"TEST-PHOTO-{i} BP"} for i in range(200)]
+        existing = [{**house(row, i + 1), "stage": "FRAMING",
+                     "coverPhotoUrl": f"/api/houses/{i + 1}/photos/{i + 1000}/file",
+                     "lastPhotoBusinessDate": "2026-10-13"} for i, row in enumerate(rows)]
+        client = FakeApi(existing)
+        baseline = deepcopy(client.houses)
+        result = import_records(client, rows)
+        self.assertTrue(result["passed"])
+        self.assertEqual((result["created"], result["existing"], result["failed"]), (0, 200, 0))
+        self.assertEqual(result["verification"]["matched"], 200)
+        self.assertEqual(result["verification"]["postResponseDifferences"], [])
+        self.assertEqual(client.houses, baseline)
+        self.assertEqual(client.posts, rows)  # Only the seven import fields, no business state writes.
+        self.assertTrue(all(r["house"]["coverPhotoUrl"] is None for r in result["responses"]))
+
+    def test_repeat_rejects_changes_to_stable_post_response_fields(self):
+        for field, value in [("id", 99), ("stage", "FOUNDATION"), ("sourceType", "MANUAL"),
+                             ("createdAt", "2026-01-01T00:00:00Z"), ("createdBusinessDate", "2026-01-01")]:
+            with self.subTest(field=field):
+                class ChangedResponse(FakeApi):
+                    def request(self, method, payload=None):
+                        status, response = super().request(method, payload)
+                        if method == "POST":
+                            response[field] = value
+                        return status, response
+
+                client = ChangedResponse([house(ROW)])
+                result = import_records(client, [ROW])
+                self.assertFalse(result["passed"])
+                self.assertEqual(result["failed"], 1)
+                self.assertIn("Existing record was not preserved", result["failures"][0]["message"])
+                self.assertEqual(client.houses[ROW["permitNo"]], house(ROW))
+
+    def test_final_query_still_detects_existing_cover_or_stage_changes(self):
+        for field, value in [("coverPhotoUrl", "/api/houses/1/photos/999/file"), ("stage", "MEP")]:
+            with self.subTest(field=field):
+                class ChangedState(FakeApi):
+                    def request(self, method, payload=None):
+                        result = super().request(method, payload)
+                        if method == "POST":
+                            self.houses[payload["permitNo"]][field] = value
+                        return result
+
+                existing = {**house(ROW), "stage": "FRAMING",
+                            "coverPhotoUrl": "/api/houses/1/photos/7/file", "lastPhotoBusinessDate": "2026-10-13"}
+                result = import_records(ChangedState([existing]), [ROW])
+                self.assertFalse(result["passed"])
+                self.assertEqual(result["verification"]["preexistingChanged"], [ROW["permitNo"]])
 
     def test_failure_stops_remaining_posts(self):
         class Unauthorized(FakeApi):

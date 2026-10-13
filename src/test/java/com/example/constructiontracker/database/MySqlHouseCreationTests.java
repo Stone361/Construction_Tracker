@@ -101,6 +101,9 @@ import static org.mockito.Mockito.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /** 与现有 MySQL 验证一致：仅在本次新建的随机测试库执行 V1，绝不连接正式库写数据。 */
 @EnabledIfSystemProperty(named = "mysql.integration", matches = "true")
@@ -570,6 +573,68 @@ class MySqlHouseCreationTests {
         assertThat(rows).contains(first, second);
         assertThat(rows.stream().map(House::id).toList())
                 .isEqualTo(jdbc.queryForList("SELECT id FROM house ORDER BY id ASC", Long.class));
+    }
+
+    @Test
+    void listJsonReflectsUploadedPhotosCoverAndMaximumBusinessDateInOneMysqlQuery() throws Exception {
+        House target = service.create(request("mysql-list-photo-linked", null, null), ADMIN).house();
+        House other = service.create(request("mysql-list-photo-no-cover", null, null), ADMIN).house();
+        House empty = service.create(request("mysql-list-photo-empty", null, null), ADMIN).house();
+        var uploads = new PhotoService(mapper, photos, new AuthorizationService(),
+                new LocalPhotoStorage(photoDirectory.toString()), CLOCK, new PhotoExifParser());
+        byte[] newerBytes = PhotoTestFiles.withExif("jpeg",
+                PhotoTestFiles.exif("2026:06:30 12:00:00", "-05:00", null, null));
+        byte[] olderBytes = PhotoTestFiles.withExif("png",
+                PhotoTestFiles.exif("2026:06:29 12:00:00", "-05:00", null, null));
+        var newer = uploads.upload(target.id(),
+                new MockMultipartFile("file", "newer.jpg", "image/jpeg", newerBytes), ADMIN);
+        var older = uploads.upload(target.id(),
+                new MockMultipartFile("file", "older.png", "image/png", olderBytes), ADMIN);
+        uploads.upload(other.id(), new MockMultipartFile("file", "newer.jpg", "image/jpeg", newerBytes), ADMIN);
+        assertThat(newer.created()).isTrue();
+        assertThat(older.created()).isTrue();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM photo WHERE house_id = ?", Integer.class, target.id()))
+                .isEqualTo(2);
+
+        var json = new ObjectMapper().findAndRegisterModules()
+                .disable(com.fasterxml.jackson.databind.SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        var mvc = MockMvcBuilders.standaloneSetup(new HouseController(service))
+                .addInterceptors(new AuthenticationInterceptor(new HeaderIdentityParser()))
+                .setControllerAdvice(new GlobalExceptionHandler())
+                .setMessageConverters(new org.springframework.http.converter.json.MappingJackson2HttpMessageConverter(json))
+                .build();
+        // The cover is deliberately older than the latest photo business day.
+        mvc.perform(put("/api/houses/{id}/cover", target.id()).header("X-User", ADMIN.username())
+                        .header("X-Role", "ADMIN").contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(Map.of("photoId", older.photo().id()))))
+                .andExpect(status().isOk());
+        assertThat(mapper.findById(target.id()).coverPhotoId()).isEqualTo(older.photo().id());
+
+        int before = QUERY_COUNTER.count.get();
+        var response = mvc.perform(get("/api/houses").header("X-User", "list-viewer").header("X-Role", "VIEWER"))
+                .andExpect(status().isOk()).andReturn().getResponse();
+        assertThat(QUERY_COUNTER.count.get() - before).isEqualTo(1);
+        var body = json.readTree(response.getContentAsString());
+        var rows = new HashMap<Long, com.fasterxml.jackson.databind.JsonNode>();
+        var ids = new ArrayList<Long>();
+        for (var row : body) {
+            long id = row.path("id").asLong();
+            ids.add(id);
+            assertThat(rows.put(id, row)).isNull();
+        }
+        assertThat(ids).isSorted();
+        assertThat(rows).containsKeys(target.id(), other.id(), empty.id());
+        assertThat(rows.get(target.id()).path("coverPhotoUrl").asText())
+                .isEqualTo("/api/houses/" + target.id() + "/photos/" + older.photo().id() + "/file");
+        assertThat(rows.get(target.id()).path("lastPhotoBusinessDate").asText()).isEqualTo("2026-06-30");
+        // Another house has the same maximum date, but must remain a separate list entry.
+        assertThat(rows.get(other.id()).path("lastPhotoBusinessDate").asText()).isEqualTo("2026-06-30");
+        assertThat(rows.get(other.id()).has("coverPhotoUrl")).isTrue();
+        assertThat(rows.get(other.id()).get("coverPhotoUrl").isNull()).isTrue();
+        for (String field : List.of("coverPhotoUrl", "lastPhotoBusinessDate")) {
+            assertThat(rows.get(empty.id()).has(field)).isTrue();
+            assertThat(rows.get(empty.id()).get(field).isNull()).isTrue();
+        }
     }
 
     @Test
