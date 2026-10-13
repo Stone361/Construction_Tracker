@@ -14,6 +14,13 @@ import org.springframework.http.HttpStatus;
 import com.example.constructiontracker.mapper.HouseMapper;
 import com.example.constructiontracker.service.AuthorizationService;
 import com.example.constructiontracker.service.HouseService;
+import com.example.constructiontracker.PhotoTestFiles;
+import com.example.constructiontracker.mapper.PhotoMapper;
+import com.example.constructiontracker.service.PhotoService;
+import com.example.constructiontracker.service.LocalPhotoStorage;
+import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.dao.DataAccessException;
+import org.junit.jupiter.api.io.TempDir;
 import org.apache.ibatis.builder.xml.XMLMapperBuilder;
 import org.apache.ibatis.mapping.Environment;
 import org.apache.ibatis.session.Configuration;
@@ -58,6 +65,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.*;
+import static org.mockito.ArgumentMatchers.any;
 
 /** 与现有 MySQL 验证一致：仅在本次新建的随机测试库执行 V1，绝不连接正式库写数据。 */
 @EnabledIfSystemProperty(named = "mysql.integration", matches = "true")
@@ -70,6 +79,8 @@ class MySqlHouseCreationTests {
     private static HouseMapper mapper;
     private static JdbcTemplate jdbc;
     private static HouseService service;
+    private static PhotoMapper photos;
+    @TempDir static Path photoDirectory;
     private static final QueryCounter QUERY_COUNTER = new QueryCounter();
 
     @BeforeAll
@@ -99,7 +110,12 @@ class MySqlHouseCreationTests {
         try (var input = MySqlHouseCreationTests.class.getResourceAsStream("/mapper/HouseMapper.xml")) {
             new XMLMapperBuilder(input, configuration, "HouseMapper.xml", configuration.getSqlFragments()).parse();
         }
-        mapper = new SqlSessionTemplate(new SqlSessionFactoryBuilder().build(configuration)).getMapper(HouseMapper.class);
+        try (var input = MySqlHouseCreationTests.class.getResourceAsStream("/mapper/PhotoMapper.xml")) {
+            new XMLMapperBuilder(input, configuration, "PhotoMapper.xml", configuration.getSqlFragments()).parse();
+        }
+        var session = new SqlSessionTemplate(new SqlSessionFactoryBuilder().build(configuration));
+        mapper = session.getMapper(HouseMapper.class);
+        photos = session.getMapper(PhotoMapper.class);
         service = new HouseService(mapper, new AuthorizationService(), CLOCK);
     }
 
@@ -110,6 +126,64 @@ class MySqlHouseCreationTests {
                 if (databaseCreated) statement.execute("DROP DATABASE " + DATABASE);
             }
         }
+    }
+
+    @Test
+    void photoUploadUsesRealV1HashOwnershipAndTruthfulFallbacks() throws Exception {
+        var house = service.create(request("mysql-photo-upload", null, null), ADMIN).house();
+        byte[] bytes = PhotoTestFiles.image("webp");
+        var storage = new LocalPhotoStorage(photoDirectory.toString());
+        var uploads = new PhotoService(mapper, photos, new AuthorizationService(), storage, CLOCK);
+        var file = new MockMultipartFile("file", "../../unsafe.exe", "text/plain", bytes);
+        var first = uploads.upload(house.id(), file, ADMIN);
+        var second = uploads.upload(house.id(), file, ADMIN);
+        assertThat(first.created()).isTrue();
+        assertThat(second.created()).isFalse();
+        assertThat(second.photo()).isEqualTo(first.photo());
+        assertThat(first.photo().contentType()).isEqualTo("image/webp");
+        assertThat(first.photo().takenAtSource()).isEqualTo("UPLOAD");
+        assertThat(first.photo().takenAt()).isEqualTo(first.photo().uploadedAt());
+        assertThat(first.photo().businessDate()).isEqualTo(LocalDate.of(2026, 6, 30));
+        assertThat(first.photo().locationStatus()).isEqualTo("UNKNOWN");
+        assertThat(first.photo().gpsLat()).isNull();
+        assertThat(first.photo().stage()).isEqualTo(house.stage());
+        var stored = jdbc.queryForMap("SELECT storage_key, content_hash FROM photo WHERE id=?", first.photo().id());
+        assertThat((byte[]) stored.get("content_hash")).isEqualTo(java.security.MessageDigest.getInstance("SHA-256").digest(bytes));
+        assertThat(Files.readAllBytes(photoDirectory.resolve((String) stored.get("storage_key")))).isEqualTo(bytes);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM photo WHERE house_id=?", Integer.class, house.id())).isEqualTo(1);
+        try (var stream = uploads.file(house.id(), first.photo().id()).resource().getInputStream()) {
+            assertThat(stream.readAllBytes()).isEqualTo(bytes);
+        }
+        assertThatThrownBy(() -> uploads.file(house.id() + 10000, first.photo().id()))
+                .isInstanceOfSatisfying(BusinessException.class, ex -> assertThat(ex.getStatus()).isEqualTo(HttpStatus.NOT_FOUND));
+    }
+
+    @Test
+    void photoFailedInsertCompensatesNewFileWithoutTouchingCommittedFiles() throws Exception {
+        var house = service.create(request("mysql-photo-failure", null, null), ADMIN).house();
+        var failing = mock(PhotoMapper.class, org.mockito.AdditionalAnswers.delegatesTo(photos));
+        doAnswer(call -> {
+            PhotoMetadata p = call.getArgument(0);
+            // Force a real MySQL CHECK failure, not a synthetic mapper exception.
+            var invalid = new PhotoMetadata(p.id(), p.houseId(), p.stage(), p.locationStatus(),
+                    p.takenAt(), p.takenAtSource(), p.businessDate(), p.uploadedAt(), p.uploadedBy(),
+                    p.originalFilename(), p.contentType(), 0L, p.gpsLat(), p.gpsLng(), p.distanceM());
+            return photos.insert(invalid, call.getArgument(1), call.getArgument(2));
+        }).when(failing).insert(any(), any(), any());
+        var storage = new LocalPhotoStorage(photoDirectory.toString());
+        var uploads = new PhotoService(mapper, failing, new AuthorizationService(), storage, CLOCK);
+        long before;
+        try (var files = Files.list(photoDirectory)) { before = files.count(); }
+        var file = new MockMultipartFile("file", "x.png", "image/png", PhotoTestFiles.image("png"));
+        assertThatThrownBy(() -> uploads.upload(house.id(), file, ADMIN))
+                .isInstanceOf(DataAccessException.class)
+                .satisfies(ex -> {
+                    Throwable cause = org.springframework.core.NestedExceptionUtils.getMostSpecificCause(ex);
+                    assertThat(cause).isInstanceOf(java.sql.SQLException.class);
+                    assertThat(((java.sql.SQLException) cause).getErrorCode()).isEqualTo(3819);
+                });
+        try (var files = Files.list(photoDirectory)) { assertThat(files.count()).isEqualTo(before); }
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM photo WHERE house_id=?", Integer.class, house.id())).isZero();
     }
 
     @Test

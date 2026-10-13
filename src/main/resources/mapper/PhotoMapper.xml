@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.constructiontracker.mapper.PhotoMapper">
+    <select id="findByHash" resultMap="com.example.constructiontracker.mapper.HouseMapper.photoMetadata">
+        SELECT id, house_id, stage, location_status, taken_at, taken_at_source, business_date,
+               uploaded_at, uploaded_by, original_filename, content_type, file_size,
+               gps_lat, gps_lng, distance_m
+        FROM photo WHERE house_id = #{houseId} AND content_hash = #{hash,jdbcType=BINARY}
+    </select>
+
+    <insert id="insert">
+        INSERT INTO photo (house_id, stage, content_hash, storage_key, original_filename,
+                           content_type, file_size, taken_at, taken_at_source, business_date,
+                           uploaded_at, uploaded_by, gps_lat, gps_lng, distance_m, location_status)
+        VALUES (#{photo.houseId}, #{photo.stage}, #{hash,jdbcType=BINARY}, #{storageKey},
+                #{photo.originalFilename,jdbcType=VARCHAR}, #{photo.contentType}, #{photo.fileSize},
+                #{photo.takenAt}, #{photo.takenAtSource}, #{photo.businessDate},
+                #{photo.uploadedAt}, #{photo.uploadedBy}, #{photo.gpsLat,jdbcType=DECIMAL},
+                #{photo.gpsLng,jdbcType=DECIMAL}, #{photo.distanceM,jdbcType=DOUBLE}, #{photo.locationStatus})
+    </insert>
+
+    <resultMap id="photoFile" type="com.example.constructiontracker.domain.PhotoFile">
+        <constructor>
+            <arg column="storage_key" javaType="java.lang.String"/>
+            <arg column="content_type" javaType="java.lang.String"/>
+            <arg column="file_size" javaType="java.lang.Long"/>
+        </constructor>
+    </resultMap>
+    <select id="findFile" resultMap="photoFile">
+        SELECT storage_key, content_type, file_size
+        FROM photo WHERE house_id = #{houseId} AND id = #{photoId}
+    </select>
+</mapper>

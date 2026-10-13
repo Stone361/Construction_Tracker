@@ -37,6 +37,12 @@ mybatis:
 
 server:
   port: 8080
+  tomcat:
+    # Drain rejected multipart bodies so clients receive the JSON 413 response.
+    max-swallow-size: -1
+
+photos:
+  storage-directory: ${PHOTO_STORAGE_DIRECTORY:./data/local/photos}
 
 management:
   endpoints:

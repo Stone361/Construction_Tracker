@@ -81,7 +81,7 @@ curl http://localhost:8080/actuator/health
 | `photo` | 照片文件元数据、上传时阶段、UTC 时间、美国中部业务日和定位状态；`house_id + content_hash`（SHA-256）唯一，复合外键保证封面属于当前房屋 |
 | `stage_history` | 成功推进的操作人、UTC 时刻及前后阶段；只允许相邻阶段推进，同一房屋的起始阶段唯一 |
 
-表使用 InnoDB；主键、唯一键、外键和 CHECK 约束通过 V1 建立。缺坐标记录可以保留，后续地图范围查询排除空坐标；无法计算照片距离时使用 `UNKNOWN`。`DATETIME(6)` 约定存 UTC，连接池会话固定 `+00:00`，业务日按 `America/Chicago` 计算。文件大小采用十进制 10 MB，即不超过 **10,000,000 字节**；HTTP 内容识别与上传接口仍待实现。
+表使用 InnoDB；主键、唯一键、外键和 CHECK 约束通过 V1 建立。缺坐标记录可以保留，后续地图范围查询排除空坐标；无法计算照片距离时使用 `UNKNOWN`。`DATETIME(6)` 约定存 UTC，连接池会话固定 `+00:00`，业务日按 `America/Chicago` 计算。文件大小采用十进制 10 MB，即不超过 **10,000,000 字节**；6.1已实现实际内容识别、上传及大小边界校验，完整 EXIF/GPS 规则仍待后续步骤。
 
 Flyway 已禁用 `clean` 和自动 `baseline`，启用迁移校验，关闭 Spring 的 `schema.sql`/`data.sql` 初始化。保留现有 Docker 数据卷，不挂载另一套首启 SQL；发现未纳管的非空库时停止迁移，先核对已有结构。当前本机正式库已成功执行 V1，三张业务表已创建。
 
@@ -89,14 +89,14 @@ Flyway 已禁用 `clean` 和自动 `baseline`，启用迁移校验，关闭 Spri
 
 ```bash
 ./mvnw test
-# 默认：246 项测试，232 项通过，14 项 MySQL 集成测试跳过；框架测试使用 H2 / MVC
+# 默认：274 项测试，258 项通过，16 项 MySQL 集成测试跳过；框架测试使用 H2 / MVC及随机端口真实HTTP
 
 docker compose up -d --wait
 ./mvnw -Dmysql.integration=true -Dtest=MySqlMigrationTests test
 # 可选：7 项 MySQL 集成测试使用 compose 中的 MySQL，不使用 Testcontainers
 
 ./mvnw -Dmysql.integration=true -Dtest=MySqlMigrationTests,MySqlHouseCreationTests test
-# 7项迁移测试 + 3项创建测试 + 2项列表测试 + 2项详情测试，均使用随机命名的隔离库
+# 7项迁移测试 + 3项创建测试 + 2项列表测试 + 2项详情测试 + 2项照片测试，共16项，均使用随机命名的隔离库
 ```
 
 MySQL 集成测试从本地 `.env` 或环境变量读取 `MYSQL_ROOT_PASSWORD`，创建随机命名的 `construction_tracker_test_<随机值>` 隔离库，执行真实 V1。测试覆盖重复迁移保留数据、许可证唯一、照片去重、封面归属、坐标与大小约束、相邻推进，以及历史汇总和时区边界；结束时只清理本次创建的测试库，不操作正式库。该组测试此前已通过；默认测试命令不连接 MySQL，也不能替代这组集成测试。
@@ -126,7 +126,7 @@ SELECT version, script, success FROM flyway_schema_history ORDER BY installed_ra
 - XML 的 `namespace` 必须是 Mapper 接口全限定名，语句 `id` 与方法名一致，参数使用 `#{参数名}` 绑定。
 - 可参考测试中的 [Mapper 接口](./src/test/java/com/example/constructiontracker/mapper/MyBatisSmokeMapper.java) 和 [XML 映射](./src/test/resources/mapper/MyBatisSmokeMapper.xml)。这些示例仅参与测试，不会打包到应用。
 
-当前已完成 Spring Boot 基础工程、MyBatis 接入、MySQL Compose 配置、Flyway V1 建表、身份授权及房屋创建、列表和详情接口。默认框架测试启用 `test` profile，使用 H2 内存数据库及随机 HTTP 端口；MySQL 专用约束和迁移通过上面的隔离库集成测试验证。照片上传、文件访问及后续业务接口仍待实现。
+当前已完成 Spring Boot 基础工程、MyBatis 接入、MySQL Compose 配置、Flyway V1 建表、身份授权、房屋创建/列表/详情接口，以及6.1照片基础上传和认证文件访问。默认框架测试启用 `test` profile，使用 H2 内存数据库及随机 HTTP 端口；MySQL 专用约束和迁移通过上面的隔离库集成测试验证。完整 EXIF/GPS、照片并发验收、封面、阶段推进及汇总仍待实现。
 
 ### 基础目录结构
 
@@ -162,7 +162,7 @@ throw new BusinessException(HttpStatus.CONFLICT, "STAGE_CONFLICT", "房屋阶段
 
 调用者会收到 HTTP 409 和 `{"code":"STAGE_CONFLICT","message":"房屋阶段已更新，请刷新后重试"}`。未知服务器异常统一返回 HTTP 500 和通用提示，详细异常仅写入服务端日志。
 
-[错误响应测试](./src/test/java/com/example/constructiontracker/exception/GlobalExceptionHandlerTests.java) 使用 MVC 测试验证状态码、JSON 格式、校验消息和响应头，不需要数据库。上传超限测试验证异常到 HTTP 413 的映射；实际文件类型与 10 MB 边界校验仍在照片上传步骤中实现。当前已接入请求头认证异常的401映射，角色与社区授权复用业务异常返回403；阶段推进等业务规则仍待实现。
+[错误响应测试](./src/test/java/com/example/constructiontracker/exception/GlobalExceptionHandlerTests.java) 使用 MVC 测试验证状态码、JSON 格式、校验消息和响应头，不需要数据库。上传超限测试验证异常到 HTTP 413 的映射；6.1照片测试已验证实际文件类型及真实 HTTP 的10 MB边界。当前已接入请求头认证异常的401映射，角色与社区授权复用业务异常返回403；阶段推进等业务规则仍待实现。
 
 ### 第三阶段：请求头认证与角色社区授权
 
@@ -237,7 +237,7 @@ curl -G 'http://localhost:8080/api/houses' \
 curl 'http://localhost:8080/api/houses/1' -H 'X-User: reviewer' -H 'X-Role: VIEWER'
 ```
 
-照片只读取现有 photo 表元数据，不实现上传、EXIF 解析、文件服务、封面设置或阶段推进。PhotoResponse 的文件 URL，以及列表 coverPhotoUrl/lastPhotoBusinessDate 的真实数据联动，仍待后续照片步骤补齐；两个列表字段当前返回 null，不生成尚不可访问的占位 URL。
+4.3验收时照片只读取现有 photo 表元数据；6.1已补齐 PhotoResponse 的认证文件访问 URL。列表 coverPhotoUrl/lastPhotoBusinessDate 的真实数据联动仍待第6、7步补齐，两个列表字段当前固定返回 null；封面设置和阶段推进尚未实现。
 
 新增5项 Service 单元测试、13项 MVC 用例及2项真实 MySQL 详情用例，复用已有隔离库与查询计数器。`./mvnw test` 为246项（232通过、0失败/错误、14项默认跳过）；单独 MySQL 集成测试14项全部通过，包含原有迁移、创建、列表及新增详情验证。覆盖无照片、404、非法ID、三种角色跨社区读取、UTC、照片归属、排序及固定查询次数。记录见 [4.3 AI 使用摘要](./docs/ai-log/2026-10-13-stage-4.3.md)。
 
@@ -347,6 +347,22 @@ LAND_CLEARING → FOUNDATION → FRAMING → MEP → INTERIOR → CO_READY
 - EXIF 时间无时区时，按 `America/Chicago` 的本地时间解释。
 - 保存 UTC 时间戳，同时单独保存按美国中部时区计算的业务日 `businessDate`。
 - 没有 EXIF 拍摄时间时，使用上传时刻换算到美国中部时区后的日期作为 `businessDate`。
+
+#### 6.1 基础上传与安全校验（自动化及人工验收通过）
+
+`POST /api/houses/{id}/photos` 接收 multipart 的 `file` 字段，复用现有认证和社区授权。ADMIN可上传任意房屋，SITE_MANAGER只能上传数据库中社区与其身份严格一致的房屋，VIEWER禁止上传。新照片201，同一房屋同内容返回200及已有照片；未认证401、无权限403、房屋不存在404、非法ID或缺少file字段400、无效图片415、超限413、存储失败500。
+
+实际解码验证JPEG、PNG和WebP，不信任扩展名或客户端Content-Type；原始文件字节保持不变。JPEG/PNG使用JDK ImageIO，WebP仅新增 `com.twelvemonkeys.imageio:imageio-webp:3.14.0` 解码插件。文件上限为10,000,000字节，恰好上限允许。真实HTTP测试验证10,000,001字节文件及超过11,000,000字节请求均返回413 JSON；Tomcat的 `max-swallow-size: -1` 用于排空被拒绝的请求体，避免客户端在收到413前连接重置，文件和请求大小限制仍然生效。
+
+本地目录默认 `./data/local/photos`，可用 `PHOTO_STORAGE_DIRECTORY` 覆盖；该默认目录不进入Git。文件名由服务端UUID及实际格式生成，使用CREATE_NEW避免覆盖，不将原始文件名拼入路径，拒绝非法存储键及存储目录/文件符号链接。元数据SQL全部位于 [PhotoMapper.xml](./src/main/resources/mapper/PhotoMapper.xml)，复用现有photo表和照片响应对象，不修改V1。
+
+现有表要求内容哈希、拍摄时刻及业务日非空，因此6.1计算真实SHA-256并复用 `(house_id, content_hash)` 唯一约束，提供最小重复提交处理；不写虚假哈希。当前尚未解析EXIF/GPS，明确使用 `takenAtSource=UPLOAD`、真实上传时刻作为takenAt，并按America/Chicago计算上传业务日；UTC时间精度为微秒，保存上传时房屋阶段，GPS与距离为null、locationStatus为UNKNOWN。UNKNOWN在本步骤表示尚未解析定位，不能声称原始文件没有GPS。原始字节保留，完整EXIF时间、GPS、200米判断及并发上传专项验收留到6.2—6.4。
+
+响应包含 `id`、`locationStatus`、`takenAt`、`businessDate`、`url` 等字段。`url` 指向 `GET /api/houses/{houseId}/photos/{photoId}/file`，所有已认证角色可以读取，查询验证照片归属，返回实际内容类型及 `X-Content-Type-Options: nosniff`。文件URL同样需要身份Header；客户端须带Header获取文件，直接使用不带身份的图片请求会返回401。
+
+文件先保存，再执行单条数据库INSERT；明确的插入失败清理本次新文件，不删除已提交照片或已有文件。数据库连接错误导致提交结果不明时保留文件并返回500，避免删除可能已入库的照片。文件系统与MySQL不是跨资源原子事务：进程崩溃、补偿删除失败或提交结果不明仍可能留下孤立文件，暂未实现自动清理机制。
+
+已执行的完整 `./mvnw test` 于2026-10-13 11:59:16结束：274项，258通过、0失败/错误、16默认跳过；本阶段新增的13项PhotoService、3项存储及10项真实HTTP/H2测试全部通过。随后启动的MySQL隔离测试于12:04:40结束：16项全部通过，其中新增2项验证实际V1哈希/归属/时间落库及真实CHECK拒绝后的文件补偿。收尾只读取这两次结果，没有重新运行测试；构建日志均为BUILD SUCCESS，未发现实际Maven解析错误。记录见 [6.1 AI使用记录](./docs/ai-log/2026-10-13-stage-6.1.md)。这仅代表6.1范围通过，不能视为原题照片功能全部完成。
 
 ### 阶段推进条件
 
@@ -466,9 +482,10 @@ LAND_CLEARING → FOUNDATION → FRAMING → MEP → INTERIOR → CO_READY
 | 请求头认证与角色社区授权 | 组件和自动化验收完成，人工审查待确认 | 后续业务 Service 从数据库读取资源所属社区后调用授权组件 |
 | 房屋创建接口 | 第4阶段验收通过 | 保留201/200幂等及 ADMIN 创建权限 |
 | 房屋列表 | 第4阶段验收通过，两个照片字段存在且为 null | coverPhotoUrl、lastPhotoBusinessDate 的真实数据联动待第6、7步补齐 |
-| 房屋详情 | 第4阶段验收通过，已返回房屋信息与照片元数据 | 文件访问 URL 待照片存储步骤补齐 |
-| 照片、阶段推进与汇总 API | 只有数据库约束及 SQL 验证 | 后续补齐文件处理、事务、HTTP 与并发测试 |
-| AI 日志与最终交付说明 | 已有第三阶段、4.1—4.4及5.1—5.2脱敏摘要 | 完整对话导出及至少两个真实 AI 不良建议和修正案例仍待整理 |
+| 房屋详情 | 第4阶段验收通过，6.1已补齐照片认证文件URL | 保持照片排序，后续补齐封面及列表真实数据联动 |
+| 照片基础上传 | 6.1自动化及人工验收通过 | 完整EXIF/GPS、200米规则、业务日期及并发专项验收留到6.2—6.4；孤立文件清理尚未实现 |
+| 阶段推进与汇总 API | 只有数据库约束及 SQL 验证 | 本日暂不开发，保留为未完成项 |
+| AI 日志与最终交付说明 | 已有第三阶段、4.1—4.4、5.1—5.2及6.1脱敏摘要 | 完整对话导出及真实 AI 不良建议和修正案例的最终交付整理仍待完成 |
 
 ## 10. 题面来源
 
