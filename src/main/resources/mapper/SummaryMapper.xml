@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.constructiontracker.mapper.SummaryMapper">
+    <!-- 沿用 DatabaseSummaryVerification 的历史快照规则。 -->
+    <sql id="snapshot">
+        WITH visible_houses AS (
+            SELECT id, created_business_date
+            FROM house
+            WHERE created_at &lt;= #{asOfUtc}
+        ), ranked_history AS (
+            SELECT sh.house_id, sh.to_stage,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY sh.house_id ORDER BY sh.changed_at DESC, sh.id DESC
+                   ) AS rn
+            FROM stage_history sh
+            JOIN visible_houses h ON h.id = sh.house_id
+            WHERE sh.changed_at &lt;= #{asOfUtc}
+        ), last_photos AS (
+            SELECT p.house_id, MAX(p.business_date) AS last_photo_business_date
+            FROM photo p
+            JOIN visible_houses h ON h.id = p.house_id
+            WHERE p.uploaded_at &lt;= #{asOfUtc}
+              AND p.business_date &lt;= #{asOfBusinessDate}
+            GROUP BY p.house_id
+        ), house_snapshot AS (
+            SELECT h.id,
+                   COALESCE(r.to_stage, 'LAND_CLEARING') AS stage,
+                   COALESCE(p.last_photo_business_date, h.created_business_date) AS last_activity_date
+            FROM visible_houses h
+            LEFT JOIN ranked_history r ON r.house_id = h.id AND r.rn = 1
+            LEFT JOIN last_photos p ON p.house_id = h.id
+        )
+    </sql>
+
+    <resultMap id="stageCount" type="com.example.constructiontracker.domain.StageCount">
+        <constructor>
+            <arg column="stage" javaType="com.example.constructiontracker.domain.ConstructionStage"/>
+            <arg column="house_count" javaType="java.lang.Long"/>
+        </constructor>
+    </resultMap>
+
+    <select id="stageCounts" resultMap="stageCount">
+        <include refid="snapshot"/>
+        SELECT stage, COUNT(*) AS house_count
+        FROM house_snapshot
+        GROUP BY stage
+    </select>
+
+    <select id="staleHouseIds" resultType="long">
+        <include refid="snapshot"/>
+        SELECT id
+        FROM house_snapshot
+        WHERE DATEDIFF(#{asOfBusinessDate}, last_activity_date) > 14
+        ORDER BY id
+    </select>
+</mapper>

@@ -22,6 +22,8 @@ import org.springframework.http.HttpStatus;
 import com.example.constructiontracker.mapper.HouseMapper;
 import com.example.constructiontracker.service.AuthorizationService;
 import com.example.constructiontracker.service.HouseService;
+import com.example.constructiontracker.service.SummaryService;
+import com.example.constructiontracker.mapper.SummaryMapper;
 import com.example.constructiontracker.PhotoTestFiles;
 import com.example.constructiontracker.mapper.PhotoMapper;
 import com.example.constructiontracker.service.PhotoService;
@@ -60,6 +62,7 @@ import org.mybatis.spring.transaction.SpringManagedTransactionFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.jdbc.datasource.DataSourceUtils;
 import org.springframework.aop.framework.ProxyFactory;
 import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
 import org.springframework.transaction.interceptor.TransactionInterceptor;
@@ -90,6 +93,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -110,6 +114,7 @@ class MySqlHouseCreationTests {
     private static JdbcTemplate jdbc;
     private static HouseService service;
     private static PhotoMapper photos;
+    private static SummaryMapper summaries;
     private static DataSourceTransactionManager transactionManager;
     @TempDir static Path photoDirectory;
     private static final QueryCounter QUERY_COUNTER = new QueryCounter();
@@ -151,9 +156,13 @@ class MySqlHouseCreationTests {
         try (var input = MySqlHouseCreationTests.class.getResourceAsStream("/mapper/PhotoMapper.xml")) {
             new XMLMapperBuilder(input, configuration, "PhotoMapper.xml", configuration.getSqlFragments()).parse();
         }
+        try (var input = MySqlHouseCreationTests.class.getResourceAsStream("/mapper/SummaryMapper.xml")) {
+            new XMLMapperBuilder(input, configuration, "SummaryMapper.xml", configuration.getSqlFragments()).parse();
+        }
         var session = new SqlSessionTemplate(new SqlSessionFactoryBuilder().build(configuration));
         mapper = session.getMapper(HouseMapper.class);
         photos = session.getMapper(PhotoMapper.class);
+        summaries = session.getMapper(SummaryMapper.class);
         service = new HouseService(mapper, photos, new AuthorizationService(), CLOCK);
     }
 
@@ -782,6 +791,62 @@ class MySqlHouseCreationTests {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM stage_history WHERE house_id=?", Integer.class, house.id())).isZero();
         assertThat(jdbc.queryForObject("SELECT stage FROM photo WHERE id=?", String.class, photo)).isEqualTo("LAND_CLEARING");
         assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+    }
+
+    @Test
+    @Timeout(30)
+    void summaryQueriesShareReadOnlyRepeatableReadSnapshotAcrossConcurrentCommit() {
+        var insertedId = new AtomicLong();
+        SummaryMapper observed = spy(summaries);
+        doAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+            assertThat(TransactionSynchronizationManager.isCurrentTransactionReadOnly()).isTrue();
+            var source = transactionManager.getDataSource();
+            Connection bound = DataSourceUtils.getConnection(source);
+            try {
+                assertThat(bound.isReadOnly()).isTrue();
+                assertThat(bound.getTransactionIsolation()).isEqualTo(Connection.TRANSACTION_REPEATABLE_READ);
+            } finally {
+                DataSourceUtils.releaseConnection(bound, source);
+            }
+            var counts = summaries.stageCounts(invocation.getArgument(0), invocation.getArgument(1));
+            // Direct DataSource access gives an independent physical connection, outside the reader's transaction.
+            try (Connection writer = source.getConnection(); var statement = writer.prepareStatement("""
+                    INSERT INTO house (permit_no, address, community, created_at, created_business_date, created_by, updated_at)
+                    VALUES (?, 'Snapshot fixture', 'Snapshot community', ?, ?, 'snapshot-writer', ?)
+                    """, java.sql.Statement.RETURN_GENERATED_KEYS)) {
+                assertThat(writer.getAutoCommit()).isTrue();
+                statement.setString(1, "mysql-summary-snapshot-" + UUID.randomUUID());
+                statement.setObject(2, LocalDateTime.parse("2026-07-02T12:00:00"));
+                statement.setObject(3, LocalDate.of(2026, 7, 2));
+                statement.setObject(4, LocalDateTime.parse("2026-07-02T12:00:00"));
+                assertThat(statement.executeUpdate()).isEqualTo(1);
+                try (var keys = statement.getGeneratedKeys()) {
+                    assertThat(keys.next()).isTrue();
+                    insertedId.set(keys.getLong(1));
+                }
+            }
+            return counts;
+        }).when(observed).stageCounts(any(), any());
+        var snapshot = transactionalSummary(observed).summary("2026-07-20T12:00:00Z");
+        assertThat(insertedId.get()).isPositive();
+        assertThat(snapshot.staleHouseIds()).doesNotContain(insertedId.get());
+        assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+        var refreshed = transactionalSummary(summaries).summary("2026-07-20T12:00:00Z");
+        assertThat(refreshed.stageCounts().values().stream().mapToLong(Long::longValue).sum())
+                .isEqualTo(snapshot.stageCounts().values().stream().mapToLong(Long::longValue).sum() + 1);
+        assertThat(refreshed.staleHouseIds()).contains(insertedId.get());
+    }
+
+    private static SummaryService transactionalSummary(SummaryMapper summaryMapper) {
+        var interceptor = new TransactionInterceptor();
+        interceptor.setTransactionManager(transactionManager);
+        interceptor.setTransactionAttributeSource(new AnnotationTransactionAttributeSource());
+        interceptor.afterPropertiesSet();
+        var factory = new ProxyFactory(new SummaryService(summaryMapper, CLOCK));
+        factory.setProxyTargetClass(true);
+        factory.addAdvice(interceptor);
+        return (SummaryService) factory.getProxy();
     }
 
     private static HouseService transactionalService(HouseMapper houseMapper) {

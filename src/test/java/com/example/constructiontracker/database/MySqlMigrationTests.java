@@ -1,5 +1,8 @@
 package com.example.constructiontracker.database;
 
+import com.example.constructiontracker.domain.ConstructionStage;
+import com.example.constructiontracker.mapper.SummaryMapper;
+import com.example.constructiontracker.service.SummaryService;
 import org.apache.ibatis.builder.xml.XMLMapperBuilder;
 import org.apache.ibatis.mapping.Environment;
 import org.apache.ibatis.session.Configuration;
@@ -26,12 +29,10 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
 import java.time.Instant;
+import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
 import java.time.ZoneOffset;
-import java.util.List;
-import java.util.Map;
 import java.util.Properties;
 import java.util.UUID;
 
@@ -50,6 +51,7 @@ class MySqlMigrationTests {
     private Connection connection;
     private JdbcTemplate jdbc;
     private SqlSession session;
+    private SummaryService summary;
 
     @BeforeAll
     static void migrateDisposableDatabase() throws Exception {
@@ -98,10 +100,13 @@ class MySqlMigrationTests {
         var source = new SingleConnectionDataSource(connection, true);
         jdbc = new JdbcTemplate(source);
         Configuration configuration = new Configuration(new Environment("mysql-verification", new JdbcTransactionFactory(), source));
-        try (InputStream input = getClass().getResourceAsStream("/mapper/DatabaseSummaryVerification.xml")) {
-            new XMLMapperBuilder(input, configuration, "DatabaseSummaryVerification.xml", configuration.getSqlFragments()).parse();
+        try (InputStream input = getClass().getResourceAsStream("/mapper/SummaryMapper.xml")) {
+            new XMLMapperBuilder(input, configuration, "SummaryMapper.xml", configuration.getSqlFragments()).parse();
         }
         session = new SqlSessionFactoryBuilder().build(configuration).openSession(connection);
+        // Historical fixtures are uncommitted on this shared connection; real Spring transaction isolation is verified separately.
+        summary = new SummaryService(session.getMapper(SummaryMapper.class),
+                Clock.fixed(Instant.parse("2026-01-20T18:00:00Z"), ZoneOffset.UTC));
     }
 
     @AfterEach
@@ -193,6 +198,8 @@ class MySqlMigrationTests {
         long future = house("future", "2026-01-20 18:00:01", "2026-01-20", null, null);
         long fourteenDays = house("fourteen", "2026-01-06 12:00:00", "2026-01-06", null, null);
         long fifteenDays = house("fifteen", "2026-01-05 12:00:00", "2026-01-05", null, null);
+        house("created-at-cutoff", "2026-01-20 18:00:00", "2026-01-20", null, null);
+        long photoMaximum = house("photo-maximum", "2026-01-01 12:00:00", "2026-01-01", 30.0, -97.0);
         history(existing, "LAND_CLEARING", "FOUNDATION", "2026-01-10 12:00:00");
         history(existing, "FOUNDATION", "FRAMING", "2026-01-20 18:00:00");
         history(existing, "FRAMING", "MEP", "2026-01-20 18:00:01");
@@ -200,34 +207,45 @@ class MySqlMigrationTests {
         photo(existing, "old", "2026-01-02 12:00:00", "2026-01-02", "2026-01-03 12:00:00", 100);
         photo(existing, "late-upload", "2026-01-19 12:00:00", "2026-01-19", "2026-01-21 12:00:00", 100);
         photo(existing, "future-exif", "2026-02-01 12:00:00", "2026-02-01", "2026-01-19 12:00:00", 100);
-        Map<String, Object> asOf = parameters("2026-01-20T18:00:00Z");
-        List<Map<String, Object>> counts = session.selectList("DatabaseSummaryVerification.stageCounts", asOf);
-        assertThat(counts).hasSize(6);
-        assertThat(count(counts, "FRAMING")).isEqualTo(1);
-        assertThat(count(counts, "MEP")).isZero();
-        List<Long> stale = session.selectList("DatabaseSummaryVerification.staleHouseIds", asOf);
-        assertThat(stale).contains(existing, fifteenDays).doesNotContain(future, fourteenDays);
+        long suspect = photo(photoMaximum, "fourteen-day-photo", "2026-01-06 12:00:00", "2026-01-06", "2026-01-07 12:00:00", 100);
+        jdbc.update("UPDATE photo SET location_status='SUSPECT', gps_lat=30.002, gps_lng=-97, distance_m=201 WHERE id=?", suspect);
+        photo(photoMaximum, "later-upload-older-photo", "2026-01-05 12:00:00", "2026-01-05", "2026-01-19 12:00:00", 100);
+        var result = summary.summary("2026-01-20T18:00:00Z");
+        assertThat(result.stageCounts()).hasSize(6);
+        assertThat(result.stageCounts().get(ConstructionStage.FRAMING)).isEqualTo(1);
+        assertThat(result.stageCounts().get(ConstructionStage.MEP)).isZero();
+        assertThat(result.stageCounts().values().stream().mapToLong(Long::longValue).sum())
+                .isEqualTo(jdbc.queryForObject("SELECT COUNT(*) FROM house WHERE created_at <= ?", Long.class,
+                        LocalDateTime.parse("2026-01-20T18:00:00")));
+        assertThat(result.staleHouseIds()).contains(existing, fifteenDays).doesNotContain(future, fourteenDays, photoMaximum);
+        assertThat(result.staleHouseIds()).isSorted().doesNotHaveDuplicates();
         // Earlier snapshot must return FOUNDATION, rather than house.stage (MEP).
-        counts = session.selectList("DatabaseSummaryVerification.stageCounts", parameters("2026-01-20T17:59:59Z"));
-        assertThat(count(counts, "FOUNDATION")).isEqualTo(1);
-        assertThat(count(counts, "FRAMING")).isZero();
+        result = summary.summary("2026-01-20T17:59:59Z");
+        assertThat(result.stageCounts().get(ConstructionStage.FOUNDATION)).isEqualTo(1);
+        assertThat(result.stageCounts().get(ConstructionStage.FRAMING)).isZero();
         // Exactly at upload time it becomes visible, using its earlier EXIF business day.
         photo(fourteenDays, "at-cutoff", "2026-01-20 12:00:00", "2026-01-20", "2026-01-21 12:00:00", 100);
         session.clearCache();
-        stale = session.selectList("DatabaseSummaryVerification.staleHouseIds", parameters("2026-01-21T12:00:00Z"));
-        assertThat(stale).doesNotContain(existing, fourteenDays);
+        result = summary.summary("2026-01-21T12:00:00Z");
+        assertThat(result.staleHouseIds()).doesNotContain(existing, fourteenDays);
     }
 
     @Test
     void chicagoBusinessDayUsesLocalMidnightAndDaylightSaving() {
         long house = house("timezone", "2026-03-01 12:00:00", "2026-03-01", null, null);
-        assertThat(parameters("2026-03-16T04:59:59Z").get("asOfBusinessDate")).isEqualTo(LocalDate.of(2026, 3, 15));
-        assertThat(parameters("2026-03-16T05:00:00Z").get("asOfBusinessDate")).isEqualTo(LocalDate.of(2026, 3, 16));
-        assertThat(parameters("2026-01-16T05:59:59Z").get("asOfBusinessDate")).isEqualTo(LocalDate.of(2026, 1, 15));
-        List<Long> before = session.selectList("DatabaseSummaryVerification.staleHouseIds", parameters("2026-03-16T04:59:59Z"));
-        List<Long> after = session.selectList("DatabaseSummaryVerification.staleHouseIds", parameters("2026-03-16T05:00:00Z"));
-        assertThat(before).doesNotContain(house);
-        assertThat(after).contains(house);
+        long winter = house("winter-timezone", "2026-01-01 12:00:00", "2026-01-01", null, null);
+        assertThat(summary.summary("2026-03-16T04:59:59Z").staleHouseIds()).doesNotContain(house);
+        assertThat(summary.summary("2026-03-16T05:00:00Z").staleHouseIds()).contains(house);
+        assertThat(summary.summary("2026-01-16T05:59:59Z").staleHouseIds()).doesNotContain(winter);
+        assertThat(summary.summary("2026-01-16T06:00:00Z").staleHouseIds()).contains(winter);
+    }
+
+    @Test
+    void emptyHistoricalSnapshotHasSixZeroStagesAndNoStaleIds() {
+        var result = summary.summary("2020-01-01T12:00:00Z");
+        assertThat(result.stageCounts()).hasSize(6);
+        assertThat(result.stageCounts().values()).containsOnly(0L);
+        assertThat(result.staleHouseIds()).isEmpty();
     }
 
     private long house(String permit, String created, String day, Double lat, Double lng) {
@@ -250,17 +268,6 @@ class MySqlMigrationTests {
     private void history(long house, String from, String to, String changed) {
         jdbc.update("INSERT INTO stage_history (house_id, from_stage, to_stage, changed_by, changed_at) VALUES (?, ?, ?, 'test-manager', ?)",
                 house, from, to, changed);
-    }
-
-    private Map<String, Object> parameters(String utc) {
-        Instant instant = Instant.parse(utc);
-        return Map.of("asOfUtc", LocalDateTime.ofInstant(instant, ZoneOffset.UTC),
-                "asOfBusinessDate", instant.atZone(ZoneId.of("America/Chicago")).toLocalDate());
-    }
-
-    private long count(List<Map<String, Object>> counts, String stage) {
-        return counts.stream().filter(row -> row.get("stage").equals(stage))
-                .mapToLong(row -> ((Number) row.get("house_count")).longValue()).findFirst().orElseThrow();
     }
 
     private void checkViolation(Runnable statement, String constraint) {
