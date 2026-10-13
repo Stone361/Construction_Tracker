@@ -1,0 +1,182 @@
+[
+  {
+    "permitNo": "2026-132169 BP",
+    "address": "3303 THOUSAND OAKS CV, AUSTIN, TX, 78746",
+    "community": "Austin Council District 8",
+    "lat": 30.266891,
+    "lng": -97.8067524,
+    "sourceUrl": "https://data.austintexas.gov/resource/3syk-w9eu.json?%24select=permit_number%2Coriginal_address1%2Coriginal_city%2Coriginal_state%2Coriginal_zip%2Clatitude%2Clongitude%2Ccouncil_district%2Cissue_date%2Cpermittype%2Cpermit_class_mapped%2Cpermit_class%2Cwork_class%2Cstatus_current&%24where=permit_number%3D%272026-132169+BP%27",
+    "sourceFetchedAt": "2026-10-13T01:59:41.528202Z"
+  },
+  {
+    "permitNo": "2025-157167 BP",
+    "address": "1102 GARNER AVE, AUSTIN, TX, 78704",
+    "community": "Austin Council District 5",
+    "lat": 30.2577738,
+    "lng": -97.7673162,
+    "sourceUrl": "https://data.austintexas.gov/resource/3syk-w9eu.json?%24select=permit_number%2Coriginal_address1%2Coriginal_city%2Coriginal_state%2Coriginal_zip%2Clatitude%2Clongitude%2Ccouncil_district%2Cissue_date%2Cpermittype%2Cpermit_class_mapped%2Cpermit_class%2Cwork_class%2Cstatus_current&%24where=permit_number%3D%272025-157167+BP%27",
+    "sourceFetchedAt": "2026-10-13T01:59:41.528202Z"
+  },
+  {
+    "permitNo": "2026-129377 BP",
+    "address": "2606 WESTOVER RD, AUSTIN, TX, 78703",
+    "community": "Austin Council District 10",
+    "lat": 30.3028966,
+    "lng": -97.763381,
+    "sourceUrl": "https://data.austintexas.gov/resource/3syk-w9eu.json?%24select=permit_number%2Coriginal_address1%2Coriginal_city%2Coriginal_state%2Coriginal_zip%2Clatitude%2Clongitude%2Ccouncil_district%2Cissue_date%2Cpermittype%2Cpermit_class_mapped%2Cpermit_class%2Cwork_class%2Cstatus_current&%24where=permit_number%3D%272026-129377+BP%27",
+    "sourceFetchedAt": "2026-10-13T01:59:41.528202Z"
+  },
+  {
+    "permitNo": "2026-130447 BP",
+    "address": "800 KINNEY AVE, AUSTIN, TX, 78704",
+    "community": "Austin Council District 5",
+    "lat": 30.2592793,
+    "lng": -97.7640731,
+    "sourceUrl": "https://data.austintexas.gov/resource/3syk-w9eu.json?%24select=permit_number%2Coriginal_address1%2Coriginal_city%2Coriginal_state%2Coriginal_zip%2Clatitude%2Clongitude%2Ccouncil_district%2Cissue_date%2Cpermittype%2Cpermit_class_mapped%2Cpermit_class%2Cwork_class%2Cstatus_current&%24where=permit_number%3D%272026-130447+BP%27",
+    "sourceFetchedAt": "2026-10-13T01:59:41.528202Z"
+  },
+  {
+    "permitNo": "2026-129577 BP",
+    "address": "2613 NOTTINGHAM LN, AUSTIN, TX, 78704",
+    "community": "Austin Council District 3",
+    "lat": 30.2329375,
+    "lng": -97.7511194,
+    "sourceUrl": "https://data.austintexas.gov/resource/3syk-w9eu.json?%24select=permit_number%2Coriginal_address1%2Coriginal_city%2Coriginal_state%2Coriginal_zip%2Clatitude%2Clongitude%2Ccouncil_district%2Cissue_date%2Cpermittype%2Cpermit_class_mapped%2Cpermit_class%2Cwork_class%2Cstatus_current&%24where=permit_number%3D%272026-129577+BP%27",
+    "sourceFetchedAt": "2026-10-13T01:59:41.528202Z"
+  },
+  {
+    "permitNo": "2026-006344 BP",
+    "address": "2002 NEW YORK AVE, AUSTIN, TX, 78702",
+    "community": "Austin Council District 1",
+    "lat": 30.2730956,
+    "lng": -97.7184597,
+    "sourceUrl": "https://data.austintexas.gov/resource/3syk-w9eu.json?%24select=permit_number%2Coriginal_address1%2Coriginal_city%2Coriginal_state%2Coriginal_zip%2Clatitude%2Clongitude%2Ccouncil_district%2Cissue_date%2Cpermittype%2Cpermit_class_mapped%2Cpermit_class%2Cwork_class%2Cstatus_current&%24where=permit_number%3D%272026-006344+BP%27",
+    "sourceFetchedAt": "2026-10-13T01:59:41.528202Z"
+  },
+  {
+    "permitNo": "2026-127846 BP",
+    "address": "12408 CORONET ST, AUSTIN, TX, 78727",
+    "community": "Austin Council District 7",
+    "lat": 30.4224189,
+    "lng": -97.7195722,
+    "sourceUrl": "https://data.austintexas.gov/resource/3syk-w9eu.json?%24select=permit_number%2Coriginal_address1%2Coriginal_city%2Coriginal_state%2Coriginal_zip%2Clatitude%2Clongitude%2Ccouncil_district%2Cissue_date%2Cpermittype%2Cpermit_class_mapped%2Cpermit_class%2Cwork_class%2Cstatus_current&%24where=permit_number%3D%272026-127846+BP%27",
+    "sourceFetchedAt": "2026-10-13T01:59:41.528202Z"
+  },
+  {
+    "permitNo": "2026-127675 BP",
+    "address": "1305 GARNER AVE, AUSTIN, TX, 78704",
+    "community": "Austin Council District 5",
+    "lat": 30.2558704,
+    "lng": -97.767994,
+    "sourceUrl": "https://data.austintexas.gov/resource/3syk-w9eu.json?%24select=permit_number%2Coriginal_address1%2Coriginal_city%2Coriginal_state%2Coriginal_zip%2Clatitude%2Clongitude%2Ccouncil_district%2Cissue_date%2Cpermittype%2Cpermit_class_mapped%2Cpermit_class%2Cwork_class%2Cstatus_current&%24where=permit_number%3D%272026-127675+BP%27",
+    "sourceFetchedAt": "2026-10-13T01:59:41.528202Z"
+  },
+  {
+    "permitNo": "2026-128167 BP",
+    "address": "1004 W 43RD ST, AUSTIN, TX, 78756",
+    "community": "Austin Council District 10",
+    "lat": 30.3114789,
+    "lng": -97.7399548,
+    "sourceUrl": "https://data.austintexas.gov/resource/3syk-w9eu.json?%24select=permit_number%2Coriginal_address1%2Coriginal_city%2Coriginal_state%2Coriginal_zip%2Clatitude%2Clongitude%2Ccouncil_district%2Cissue_date%2Cpermittype%2Cpermit_class_mapped%2Cpermit_class%2Cwork_class%2Cstatus_current&%24where=permit_number%3D%272026-128167+BP%27",
+    "sourceFetchedAt": "2026-10-13T01:59:41.528202Z"
+  },
+  {
+    "permitNo": "2026-126770 BP",
+    "address": "1904 PIEDMONT AVE, AUSTIN, TX, 78757",
+    "community": "Austin Council District 7",
+    "lat": 30.346281,
+    "lng": -97.7312278,
+    "sourceUrl": "https://data.austintexas.gov/resource/3syk-w9eu.json?%24select=permit_number%2Coriginal_address1%2Coriginal_city%2Coriginal_state%2Coriginal_zip%2Clatitude%2Clongitude%2Ccouncil_district%2Cissue_date%2Cpermittype%2Cpermit_class_mapped%2Cpermit_class%2Cwork_class%2Cstatus_current&%24where=permit_number%3D%272026-126770+BP%27",
+    "sourceFetchedAt": "2026-10-13T01:59:41.528202Z"
+  },
+  {
+    "permitNo": "2026-127167 BP",
+    "address": "2802 PERRY LN, AUSTIN, TX, 78731",
+    "community": "Austin Council District 7",
+    "lat": 30.3236275,
+    "lng": -97.7525125,
+    "sourceUrl": "https://data.austintexas.gov/resource/3syk-w9eu.json?%24select=permit_number%2Coriginal_address1%2Coriginal_city%2Coriginal_state%2Coriginal_zip%2Clatitude%2Clongitude%2Ccouncil_district%2Cissue_date%2Cpermittype%2Cpermit_class_mapped%2Cpermit_class%2Cwork_class%2Cstatus_current&%24where=permit_number%3D%272026-127167+BP%27",
+    "sourceFetchedAt": "2026-10-13T01:59:41.528202Z"
+  },
+  {
+    "permitNo": "2026-124859 BP",
+    "address": "2609 STRATFORD DR, AUSTIN, TX, 78746",
+    "community": "Austin Council District 8",
+    "lat": 30.277562,
+    "lng": -97.7809326,
+    "sourceUrl": "https://data.austintexas.gov/resource/3syk-w9eu.json?%24select=permit_number%2Coriginal_address1%2Coriginal_city%2Coriginal_state%2Coriginal_zip%2Clatitude%2Clongitude%2Ccouncil_district%2Cissue_date%2Cpermittype%2Cpermit_class_mapped%2Cpermit_class%2Cwork_class%2Cstatus_current&%24where=permit_number%3D%272026-124859+BP%27",
+    "sourceFetchedAt": "2026-10-13T01:59:41.528202Z"
+  },
+  {
+    "permitNo": "2026-108955 BP",
+    "address": "3300 YELLOWPINE TER, AUSTIN, TX, 78757",
+    "community": "Austin Council District 7",
+    "lat": 30.3564792,
+    "lng": -97.7441331,
+    "sourceUrl": "https://data.austintexas.gov/resource/3syk-w9eu.json?%24select=permit_number%2Coriginal_address1%2Coriginal_city%2Coriginal_state%2Coriginal_zip%2Clatitude%2Clongitude%2Ccouncil_district%2Cissue_date%2Cpermittype%2Cpermit_class_mapped%2Cpermit_class%2Cwork_class%2Cstatus_current&%24where=permit_number%3D%272026-108955+BP%27",
+    "sourceFetchedAt": "2026-10-13T01:59:41.528202Z"
+  },
+  {
+    "permitNo": "2026-108350 BP",
+    "address": "1500 W ST JOHNS AVE, AUSTIN, TX, 78757",
+    "community": "Austin Council District 7",
+    "lat": 30.3430125,
+    "lng": -97.726569,
+    "sourceUrl": "https://data.austintexas.gov/resource/3syk-w9eu.json?%24select=permit_number%2Coriginal_address1%2Coriginal_city%2Coriginal_state%2Coriginal_zip%2Clatitude%2Clongitude%2Ccouncil_district%2Cissue_date%2Cpermittype%2Cpermit_class_mapped%2Cpermit_class%2Cwork_class%2Cstatus_current&%24where=permit_number%3D%272026-108350+BP%27",
+    "sourceFetchedAt": "2026-10-13T01:59:41.528202Z"
+  },
+  {
+    "permitNo": "2026-119798 BP",
+    "address": "2019 FORD ST, AUSTIN, TX, 78704",
+    "community": "Austin Council District 5",
+    "lat": 30.2542402,
+    "lng": -97.7743544,
+    "sourceUrl": "https://data.austintexas.gov/resource/3syk-w9eu.json?%24select=permit_number%2Coriginal_address1%2Coriginal_city%2Coriginal_state%2Coriginal_zip%2Clatitude%2Clongitude%2Ccouncil_district%2Cissue_date%2Cpermittype%2Cpermit_class_mapped%2Cpermit_class%2Cwork_class%2Cstatus_current&%24where=permit_number%3D%272026-119798+BP%27",
+    "sourceFetchedAt": "2026-10-13T01:59:41.528202Z"
+  },
+  {
+    "permitNo": "2026-121229 BP",
+    "address": "1904 ROBINHOOD TRL, AUSTIN, TX, 78703",
+    "community": "Austin Council District 10",
+    "lat": 30.2981203,
+    "lng": -97.7780149,
+    "sourceUrl": "https://data.austintexas.gov/resource/3syk-w9eu.json?%24select=permit_number%2Coriginal_address1%2Coriginal_city%2Coriginal_state%2Coriginal_zip%2Clatitude%2Clongitude%2Ccouncil_district%2Cissue_date%2Cpermittype%2Cpermit_class_mapped%2Cpermit_class%2Cwork_class%2Cstatus_current&%24where=permit_number%3D%272026-121229+BP%27",
+    "sourceFetchedAt": "2026-10-13T01:59:41.528202Z"
+  },
+  {
+    "permitNo": "2026-055739 BP",
+    "address": "2318 EUCLID AVE, AUSTIN, TX, 78704",
+    "community": "Austin Council District 3",
+    "lat": 30.240409,
+    "lng": -97.7558452,
+    "sourceUrl": "https://data.austintexas.gov/resource/3syk-w9eu.json?%24select=permit_number%2Coriginal_address1%2Coriginal_city%2Coriginal_state%2Coriginal_zip%2Clatitude%2Clongitude%2Ccouncil_district%2Cissue_date%2Cpermittype%2Cpermit_class_mapped%2Cpermit_class%2Cwork_class%2Cstatus_current&%24where=permit_number%3D%272026-055739+BP%27",
+    "sourceFetchedAt": "2026-10-13T01:59:41.528202Z"
+  },
+  {
+    "permitNo": "2026-122240 BP",
+    "address": "5807 WYNONA AVE, AUSTIN, TX, 78756",
+    "community": "Austin Council District 7",
+    "lat": 30.3348651,
+    "lng": -97.7417264,
+    "sourceUrl": "https://data.austintexas.gov/resource/3syk-w9eu.json?%24select=permit_number%2Coriginal_address1%2Coriginal_city%2Coriginal_state%2Coriginal_zip%2Clatitude%2Clongitude%2Ccouncil_district%2Cissue_date%2Cpermittype%2Cpermit_class_mapped%2Cpermit_class%2Cwork_class%2Cstatus_current&%24where=permit_number%3D%272026-122240+BP%27",
+    "sourceFetchedAt": "2026-10-13T01:59:41.528202Z"
+  },
+  {
+    "permitNo": "2026-106960 BP",
+    "address": "1205 GASTON AVE, AUSTIN, TX, 78703",
+    "community": "Austin Council District 10",
+    "lat": 30.2938754,
+    "lng": -97.7512005,
+    "sourceUrl": "https://data.austintexas.gov/resource/3syk-w9eu.json?%24select=permit_number%2Coriginal_address1%2Coriginal_city%2Coriginal_state%2Coriginal_zip%2Clatitude%2Clongitude%2Ccouncil_district%2Cissue_date%2Cpermittype%2Cpermit_class_mapped%2Cpermit_class%2Cwork_class%2Cstatus_current&%24where=permit_number%3D%272026-106960+BP%27",
+    "sourceFetchedAt": "2026-10-13T01:59:41.528202Z"
+  },
+  {
+    "permitNo": "2026-104629 BP",
+    "address": "1007 JEWELL ST, AUSTIN, TX, 78704",
+    "community": "Austin Council District 9",
+    "lat": 30.2521998,
+    "lng": -97.760368,
+    "sourceUrl": "https://data.austintexas.gov/resource/3syk-w9eu.json?%24select=permit_number%2Coriginal_address1%2Coriginal_city%2Coriginal_state%2Coriginal_zip%2Clatitude%2Clongitude%2Ccouncil_district%2Cissue_date%2Cpermittype%2Cpermit_class_mapped%2Cpermit_class%2Cwork_class%2Cstatus_current&%24where=permit_number%3D%272026-104629+BP%27",
+    "sourceFetchedAt": "2026-10-13T01:59:41.528202Z"
+  }
+]

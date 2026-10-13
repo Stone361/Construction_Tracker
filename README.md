@@ -245,7 +245,50 @@ curl 'http://localhost:8080/api/houses/1' -H 'X-User: reviewer' -H 'X-Role: VIEW
 
 ## 3. 数据获取与导入
 
-**当前尚未获取或导入不少于200条真实公开数据**，数据获取脚本和导入接口也尚未实现；数据库测试中的数据仅为测试夹具，不计入真实数据交付。
+**5.1已获取并清洗200条真实公开建筑许可，5.2已通过API导入并验证重复运行幂等**。仅通过 `POST /api/houses` 导入，不直接写数据库；数据库测试夹具不计入真实数据交付。
+
+### 5.1 Austin 数据获取与清洗（已完成，采集阶段不导入）
+
+数据源为 City of Austin / Austin Development Services 的 [Issued Construction Permits](https://data.austintexas.gov/Building-and-Development/Issued-Construction-Permits/3syk-w9eu/about_data)，数据集 ID `3syk-w9eu`。[使用条款](https://data.austintexas.gov/stories/s/ranj-cccq)允许使用公开数据，须注明来源，不进行个人重新识别或联系。脚本只获取必要的许可、地址和坐标字段，不获取申请人或承包商联系方式。
+
+用户已确认首批筛选：`permittype=BP`、`permit_class_mapped=Residential`、`permit_class=R- 101 Single Family Houses`、`work_class=New`、`status_current=Active`、`issue_date >= 2025-01-01`。按发证日降序、完整许可证号升序稳定分页，清洗后选取200条许可证唯一、坐标有效的记录。Active只是许可证状态，不证明实际施工进度；输出不含 stage，后续由创建接口使用默认 LAND_CLEARING。
+
+使用 Python 3 标准库，无额外依赖；在项目根目录执行：
+
+```bash
+python3 scripts/fetch_austin_permits.py
+python3 -m unittest discover -s scripts/tests -v
+```
+
+脚本每次先读取并检查 [robots.txt](https://data.austintexas.gov/robots.txt)，无法获取、无法识别或不允许API路径时停止。当前 Crawl-delay 为1秒，脚本串行请求至少间隔2秒；若 robots 要求更长间隔则采用更长值。429及暂时性502/503/504最多重试3次，按 Retry-After 和退避等待，服务器要求超过60秒等待时停止，留待之后重跑，不提前重试。
+
+字段映射：`permit_number` → permitNo（完整保留BP后缀和大小写）；`original_address1`及城市/州/邮编 → address；`council_district` → `Austin Council District N`（N为1—10）。community采用用户确认的行政区分组，不声称是实际小区名。经纬度先校验有效数值和全球范围，再以十进制 ROUND_HALF_UP 四舍五入至7位小数。每条记录的 sourceUrl 是按完整许可证号定位原记录的官方API URL，sourceFetchedAt 是该页成功获取后的实际 UTC 时间，不使用发证日代替。
+
+本批只选坐标有效记录：缺任一坐标、无法解析、非有限数或越界的记录排除并统计原因；空许可证、空/超长地址、非法行政区、范围外记录及重复许可证也排除。不填零、不猜坐标、不做额外地理编码。此策略只用于首批采集，现有房屋API仍允许 lat/lng 同时为 null。
+
+完整清洗结果位于 `data/local/austin-houses.json`，统计及最多20条排除示例位于 `data/local/austin-collection-report.json`，整个目录由 Git 忽略。仓库只保留 [20条真实样本](./data/samples/austin-houses.json)，通过 `--sample-size` 可调整但不得超过50条；不保存完整原始数据。`--limit` 默认200且不能小于200，`--page-size` 默认200，`--delay` 默认2秒。
+
+每次从首批数据重新采集，在许可证号范围内去重，成功后按文件原子替换输出，不追加；数据不足200条或采集失败时不发布新的结果。重复采集会刷新获取时间，官方数据更新时记录内容也可能变化。重复API导入的幂等验收属于5.2，本步骤不调用本服务或数据库。
+
+本次采集6页共1200条：有效唯一211条，排除989条（全部为缺失坐标），选取200条，另外11条有效记录未选入；仓库样本20条。离线清洗及请求规则测试全部通过，过程见 [5.1 AI 使用记录](./docs/ai-log/2026-10-13-stage-5.1.md)。
+
+### 5.2 Austin API导入与幂等验证（已完成）
+
+[导入脚本](./scripts/import_austin_houses.py)使用现有 `data/local/austin-houses.json`，不会重新采集。输入全部校验通过后才发起请求；只使用本服务的 GET/POST `/api/houses`，不连接数据库。请求头固定 `X-Role: ADMIN`，`X-User` 默认 `austin-import`，ADMIN无需 X-Community。保留原始地址、坐标、community、sourceUrl和实际获取时间，不传入stage或创建者。
+
+启动本项目后，在项目根目录执行；下面命令假设应用位于8081：
+
+```bash
+python3 -B scripts/import_austin_houses.py --base-url http://127.0.0.1:8081 --report data/local/austin-import-first.json
+python3 -B scripts/import_austin_houses.py --base-url http://127.0.0.1:8081 --report data/local/austin-import-second.json
+python3 -B -W error::ResourceWarning -m unittest discover -s scripts/tests -v
+```
+
+脚本串行导入，新建201、已存在200分别计数。每次先读取列表，导入后再次读取列表，逐条核对200条输入字段、POST响应、ID和已有记录的完整列表响应；已有数据与输入冲突时报告失败，不覆盖。请求失败时停止剩余写入，返回非零退出码并记录未尝试数量；不自动重试POST，处理问题后可用同一输入重跑，服务端permitNo唯一约束保证幂等。使用 `--username` 可调整ADMIN用户名；不需要或读取数据库密码。
+
+本次应用在未占用8081启动，禁用本次Flyway执行。首次200条全部201（新建200、已存在0、失败0），正式库列表从3条增至203条；第二次全部200（新建0、已存在200、失败0），仍为203条。两次200条完整POST响应一致，包括ID、来源及创建时间；列表查询确认全部输入字段一致，原有3条列表记录未变化。另用VIEWER查询列表及5条详情，验证可读取、创建者为austin-import、updatedAt等于createdAt、photos为空。
+
+Python脚本测试31项全部通过（5.1原有20项，5.2新增11项），覆盖首次/重复导入、已有阶段与无关记录保留、冲突、失败停止、查询不一致、输入校验及ADMIN请求头。未修改Java业务代码或运行数据库迁移，真实400次POST与查询验收通过。用户已确认第5阶段手工验收通过。完整导入报告及响应只保存在Git忽略的 `data/local/`，不新增仓库真实样本。过程见 [5.2 AI使用与验证记录](./docs/ai-log/2026-10-13-stage-5.2.md)。
 
 ### 数据要求
 
@@ -388,7 +431,7 @@ LAND_CLEARING → FOUNDATION → FRAMING → MEP → INTERIOR → CO_READY
 
 测试验收贯穿每个模块。交付整理包括 README 中真实的完成状态与取舍、运行和测试说明、数据来源、AI完整对话及实际技术讨论/问题/修正记录，不编造人工纠错案例。Git保持小步、有意义的提交，遵守原题至少8次提交要求，不改写已有历史；实际提交按后续明确指令执行。技术面试准备重点为代码调用链、权限位置、幂等和并发、时间与业务日、文件存储安全，以及每次提交的设计决定。
 
-计划同步时仅记录计划，后续已按明确授权完成4.4验收及最小修复，第4阶段为 PASS。第5步及后续开发等待新的明确指令；本次阶段提交不启动数据导入或照片业务。
+计划同步时仅记录计划，后续已按明确授权完成4.4验收及最小修复，第4阶段为 PASS；第5步已完成采集、清洗和API导入验证。照片业务及后续开发等待新的明确指令。
 
 ## 7. 并发、去重与关键设计备忘
 
@@ -419,13 +462,13 @@ LAND_CLEARING → FOUNDATION → FRAMING → MEP → INTERIOR → CO_READY
 
 | 项目 | 当前状态 | 后续处理 |
 | --- | --- | --- |
-| 真实数据与导入脚本 | 尚未导入200条真实记录 | 后续通过 POST /api/houses 导入，保存来源和获取时间 |
+| 真实数据与导入脚本 | 200条真实许可已通过API导入，重复导入及第5阶段手工验收通过 | 仓库保留20条真实样本，完整结果和报告不进入Git |
 | 请求头认证与角色社区授权 | 组件和自动化验收完成，人工审查待确认 | 后续业务 Service 从数据库读取资源所属社区后调用授权组件 |
 | 房屋创建接口 | 第4阶段验收通过 | 保留201/200幂等及 ADMIN 创建权限 |
 | 房屋列表 | 第4阶段验收通过，两个照片字段存在且为 null | coverPhotoUrl、lastPhotoBusinessDate 的真实数据联动待第6、7步补齐 |
 | 房屋详情 | 第4阶段验收通过，已返回房屋信息与照片元数据 | 文件访问 URL 待照片存储步骤补齐 |
 | 照片、阶段推进与汇总 API | 只有数据库约束及 SQL 验证 | 后续补齐文件处理、事务、HTTP 与并发测试 |
-| AI 日志与最终交付说明 | 已有第三阶段及4.1—4.4脱敏摘要 | 完整对话导出及至少两个真实 AI 不良建议和修正案例仍待整理 |
+| AI 日志与最终交付说明 | 已有第三阶段、4.1—4.4及5.1—5.2脱敏摘要 | 完整对话导出及至少两个真实 AI 不良建议和修正案例仍待整理 |
 
 ## 10. 题面来源
 

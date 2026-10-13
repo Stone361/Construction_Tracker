@@ -39,3 +39,7 @@ build/
 
 # macOS metadata
 .DS_Store
+
+# Full public-data collection and local collection reports
+/data/local/
+__pycache__/
