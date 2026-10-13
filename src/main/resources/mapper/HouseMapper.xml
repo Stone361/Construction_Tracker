@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.constructiontracker.mapper.HouseMapper">
+    <resultMap id="house" type="com.example.constructiontracker.domain.House">
+        <constructor>
+            <idArg column="id" javaType="java.lang.Long"/>
+            <arg column="permit_no" javaType="java.lang.String"/>
+            <arg column="address" javaType="java.lang.String"/>
+            <arg column="community" javaType="java.lang.String"/>
+            <arg column="lat" javaType="java.math.BigDecimal"/>
+            <arg column="lng" javaType="java.math.BigDecimal"/>
+            <arg column="stage" javaType="com.example.constructiontracker.domain.ConstructionStage"/>
+            <arg column="cover_photo_id" javaType="java.lang.Long"/>
+            <arg column="source_type" javaType="com.example.constructiontracker.domain.HouseSourceType"/>
+            <arg column="source_url" javaType="java.lang.String"/>
+            <arg column="source_fetched_at" javaType="java.time.LocalDateTime"/>
+            <arg column="created_at" javaType="java.time.LocalDateTime"/>
+            <arg column="created_business_date" javaType="java.time.LocalDate"/>
+            <arg column="created_by" javaType="java.lang.String"/>
+            <arg column="updated_at" javaType="java.time.LocalDateTime"/>
+        </constructor>
+    </resultMap>
+
+    <resultMap id="photoMetadata" type="com.example.constructiontracker.domain.PhotoMetadata">
+        <constructor>
+            <idArg column="id" javaType="java.lang.Long"/>
+            <arg column="house_id" javaType="java.lang.Long"/>
+            <arg column="stage" javaType="com.example.constructiontracker.domain.ConstructionStage"/>
+            <arg column="location_status" javaType="java.lang.String"/>
+            <arg column="taken_at" javaType="java.time.LocalDateTime"/>
+            <arg column="taken_at_source" javaType="java.lang.String"/>
+            <arg column="business_date" javaType="java.time.LocalDate"/>
+            <arg column="uploaded_at" javaType="java.time.LocalDateTime"/>
+            <arg column="uploaded_by" javaType="java.lang.String"/>
+            <arg column="original_filename" javaType="java.lang.String"/>
+            <arg column="content_type" javaType="java.lang.String"/>
+            <arg column="file_size" javaType="java.lang.Long"/>
+            <arg column="gps_lat" javaType="java.math.BigDecimal"/>
+            <arg column="gps_lng" javaType="java.math.BigDecimal"/>
+            <arg column="distance_m" javaType="java.lang.Double"/>
+        </constructor>
+    </resultMap>
+
+    <select id="findById" resultMap="house">
+        SELECT id, permit_no, address, community, lat, lng, stage, cover_photo_id,
+               source_type, source_url, source_fetched_at, created_at,
+               created_business_date, created_by, updated_at
+        FROM house WHERE id = #{id}
+    </select>
+
+    <select id="findPhotosByHouseId" resultMap="photoMetadata">
+        SELECT id, house_id, stage, location_status, taken_at, taken_at_source, business_date,
+               uploaded_at, uploaded_by, original_filename, content_type, file_size,
+               gps_lat, gps_lng, distance_m
+        FROM photo WHERE house_id = #{houseId}
+        ORDER BY taken_at ASC, id ASC
+    </select>
+
+    <select id="findByPermitNo" resultMap="house">
+        SELECT id, permit_no, address, community, lat, lng, stage, cover_photo_id,
+               source_type, source_url, source_fetched_at, created_at,
+               created_business_date, created_by, updated_at
+        FROM house WHERE permit_no = #{permitNo}
+    </select>
+
+    <select id="findAll" resultMap="house">
+        SELECT id, permit_no, address, community, lat, lng, stage, cover_photo_id,
+               source_type, source_url, source_fetched_at, created_at,
+               created_business_date, created_by, updated_at
+        FROM house
+        <where>
+            <if test="query.minLng != null">
+                AND lat IS NOT NULL AND lng IS NOT NULL
+                AND lng BETWEEN #{query.minLng} AND #{query.maxLng}
+                AND lat BETWEEN #{query.minLat} AND #{query.maxLat}
+            </if>
+            <if test="query.stage != null">
+                AND stage = #{query.stage}
+            </if>
+        </where>
+        ORDER BY id ASC
+    </select>
+
+    <insert id="insert">
+        INSERT INTO house (permit_no, address, community, lat, lng, stage, source_type,
+                           source_url, source_fetched_at, created_at, created_business_date,
+                           created_by, updated_at)
+        VALUES (#{house.permitNo}, #{house.address}, #{house.community},
+                #{house.lat,jdbcType=DECIMAL}, #{house.lng,jdbcType=DECIMAL}, #{house.stage},
+                #{house.sourceType}, #{house.sourceUrl,jdbcType=LONGVARCHAR},
+                #{house.sourceFetchedAt,jdbcType=TIMESTAMP}, #{house.createdAt},
+                #{house.createdBusinessDate}, #{house.createdBy}, #{house.updatedAt})
+    </insert>
+</mapper>

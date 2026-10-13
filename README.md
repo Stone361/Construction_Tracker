@@ -89,11 +89,14 @@ Flyway 已禁用 `clean` 和自动 `baseline`，启用迁移校验，关闭 Spri
 
 ```bash
 ./mvnw test
-# 默认：129 项测试，122 项通过，7 项 MySQL 集成测试跳过；框架测试使用 H2 / MVC
+# 默认：246 项测试，232 项通过，14 项 MySQL 集成测试跳过；框架测试使用 H2 / MVC
 
 docker compose up -d --wait
 ./mvnw -Dmysql.integration=true -Dtest=MySqlMigrationTests test
 # 可选：7 项 MySQL 集成测试使用 compose 中的 MySQL，不使用 Testcontainers
+
+./mvnw -Dmysql.integration=true -Dtest=MySqlMigrationTests,MySqlHouseCreationTests test
+# 7项迁移测试 + 3项创建测试 + 2项列表测试 + 2项详情测试，均使用随机命名的隔离库
 ```
 
 MySQL 集成测试从本地 `.env` 或环境变量读取 `MYSQL_ROOT_PASSWORD`，创建随机命名的 `construction_tracker_test_<随机值>` 隔离库，执行真实 V1。测试覆盖重复迁移保留数据、许可证唯一、照片去重、封面归属、坐标与大小约束、相邻推进，以及历史汇总和时区边界；结束时只清理本次创建的测试库，不操作正式库。该组测试此前已通过；默认测试命令不连接 MySQL，也不能替代这组集成测试。
@@ -123,7 +126,7 @@ SELECT version, script, success FROM flyway_schema_history ORDER BY installed_ra
 - XML 的 `namespace` 必须是 Mapper 接口全限定名，语句 `id` 与方法名一致，参数使用 `#{参数名}` 绑定。
 - 可参考测试中的 [Mapper 接口](./src/test/java/com/example/constructiontracker/mapper/MyBatisSmokeMapper.java) 和 [XML 映射](./src/test/resources/mapper/MyBatisSmokeMapper.xml)。这些示例仅参与测试，不会打包到应用。
 
-当前已完成 Spring Boot 基础工程、MyBatis 接入、MySQL Compose 配置和 Flyway V1 建表，业务接口尚未实现。默认框架测试启用 `test` profile，使用 H2 内存数据库及随机 HTTP 端口；MySQL 专用约束和迁移通过上面的隔离库集成测试验证。后续业务实现还需补充 HTTP 接口、权限和并发测试。
+当前已完成 Spring Boot 基础工程、MyBatis 接入、MySQL Compose 配置、Flyway V1 建表、身份授权及房屋创建、列表和详情接口。默认框架测试启用 `test` profile，使用 H2 内存数据库及随机 HTTP 端口；MySQL 专用约束和迁移通过上面的隔离库集成测试验证。照片上传、文件访问及后续业务接口仍待实现。
 
 ### 基础目录结构
 
@@ -141,7 +144,7 @@ Java 主代码统一放在 `com.example.constructiontracker` 包下，各层职�
 | [src/main/resources/mapper](./src/main/resources/mapper/) | 保存 MyBatis XML，所有 SQL 写在这里 |
 | [src/test](./src/test/) | 保存测试代码和测试配置 |
 
-调用顺序为 Controller → Service → Mapper；Mapper 接口关联 XML SQL。各 Java 分层目录通过 `package-info.java` 保留并说明职责。已建立目录和职责说明，并实现统一错误响应及数据库表；Java 业务模型和业务接口仍待实现。
+调用顺序为 Controller → Service → Mapper；Mapper 接口关联 XML SQL。各 Java 分层目录通过 `package-info.java` 保留并说明职责。已实现统一错误响应、身份授权、数据库表及房屋创建所需模型和接口。
 
 ### 统一错误响应（已实现）
 
@@ -170,6 +173,75 @@ throw new BusinessException(HttpStatus.CONFLICT, "STAGE_CONFLICT", "房屋阶段
 第三阶段验收的默认测试为129项（122通过、0失败、7项默认跳过），另行运行的7项 MySQL 隔离测试全部通过。在8081启动当前版本进行真实 HTTP 验证：无身份健康接口200，无身份 `/api/houses` 为401，合法 ADMIN 为404，非法角色为401。404不是认证成功的单独证据，认证成功及身份传递同时由 MockMvc 断言验证。正式房屋 API 尚未开发，没有为验收新增生产接口。
 
 验收记录与真实 AI 错误说明见 [第三阶段 AI 使用摘要](./docs/ai-log/2026-10-12-stage-3.md)，请求、响应体及关键响应头见 [HTTP 验收 JSON](./docs/verification/2026-10-12-stage-3-http.json)。用户已授权在提交前检查和测试通过后提交第三阶段；该授权不代表已完成正式人工代码审查，摘要不替代完整 AI 对话导出。
+
+### 第四阶段：房屋接口（按小步骤实现）
+
+| 步骤 | 范围 | 状态 |
+| --- | --- | --- |
+| 4.1 | 房屋模型、创建接口、许可证幂等与创建权限 | 已验收，本次回归通过 |
+| 4.2 | 地图列表、独立坐标/bbox/阶段筛选、一次 SQL 查询 | 已手工验证，本次回归通过 |
+| 4.3 | 房屋详情、按拍摄时间排序的照片元数据 | 已完成，4.4手工验收通过 |
+| 4.4 | 房屋接口集成验收与提交准备 | PASS，列表响应字段补齐及回归通过 |
+
+4.1提供 `POST /api/houses`，复用请求头认证及 `AuthorizationService.requireAdmin`。仅 ADMIN 可以创建；新记录返回201，重复 `permitNo` 返回200及原记录，不覆盖其地址、社区、阶段、来源或创建时间。许可证、地址和社区去除首尾空白并校验非空和数据库字段长度，不转换大小写。
+
+`lat`、`lng` 可以同时省略或为 null；只缺一个、越界或超过7位小数返回400。缺坐标房屋保留在数据库，后续地图范围查询将排除无坐标记录。新房屋固定为 `LAND_CLEARING`，创建者来自已认证身份，不使用客户端传入的阶段或创建者。
+
+来源扩展字段 `sourceUrl`、`sourceFetchedAt` 必须同时提供或同时省略。省略时记为 MANUAL；提供时记为 PUBLIC_DATA，保留 URL 与获取时间。URL 只接受不含账号凭据的 HTTP/HTTPS 地址，最多2048字符；获取时间使用 ISO-8601，转换为 UTC，年份须在1000到9999之间以适配现有数据库字段。后续公开数据导入必须提供这两个字段。
+
+示例请求（现有五字段契约仍兼容）：
+
+```json
+{
+  "permitNo": "EXAMPLE-PERMIT-001",
+  "address": "Example address",
+  "community": "North Austin",
+  "lat": 30.2672000,
+  "lng": -97.7431000
+}
+```
+
+创建时间由可注入的 UTC Clock 生成，按 DATETIME(6) 截断为微秒；`createdBusinessDate` 使用 `America/Chicago`，响应时间带 `Z`。MyBatis 的 INSERT 和查询均写在 [HouseMapper.xml](./src/main/resources/mapper/HouseMapper.xml)，参数绑定使用 `#{}`。许可证唯一键兜底并发：捕获 `DuplicateKeyException` 后查询并返回已提交的原记录，其他数据库错误不伪装成重复。创建只执行一个 INSERT，不添加包含早期查询的 REPEATABLE READ 事务，避免冲突后仍读取旧快照。
+
+默认新增47项服务/MVC/H2测试全部通过；另有3项真实 MySQL 创建测试默认跳过，单独运行时已通过，其中并发测试强制两个请求先读到许可证不存在，再竞争插入。原有7项 MySQL 迁移测试也已复跑通过。测试库与正式库隔离，未向正式库写入验收数据。实现和验证摘要见 [4.1 AI 使用记录](./docs/ai-log/2026-10-12-stage-4.1.md)。
+
+4.2提供 `GET /api/houses`，返回按 ID 升序排列的 JSON 数组，无匹配记录为 `[]`。不传参数查询全部房屋；支持原题的可选独立参数 `minLat`、`maxLat`、`minLng`、`maxLng`，也兼容 `bbox=minLng,minLat,maxLng,maxLat`。任一坐标形式均可与 `stage=ConstructionStage枚举名` 组合。ADMIN、SITE_MANAGER、VIEWER 均可读取全部社区；请求头认证失败仍返回401，不按 `X-Community` 限制读取。
+
+bbox 使用四个逗号分隔的常规十进制数，允许首尾空白，拒绝 NaN、Infinity 和指数记法；单个坐标最多32字符，整个 bbox 最多256字符。经度在[-180,180]、纬度在[-90,90]，最小值不得超过最大值；相等可表示单点或边界线，范围包含边界。传入空/空白参数、格式错误、坐标越界、颠倒范围或非法 stage 返回400及 `{"code":"INVALID_REQUEST","message":"..."}`；stage 区分大小写，允许首尾空白，使用已有 ConstructionStage 枚举。
+
+独立坐标参数使用相同数值校验，可只提供部分边界：未提供的 minLat/maxLat/minLng/maxLng 分别取 -90/90/-180/180。转换为同一 HouseListQuery 后复用原 SQL，未重构查询或创建流程。提供任一坐标范围参数时排除空坐标；坐标参数全部省略时保留空坐标。bbox 与任一独立坐标参数同时出现返回400，避免冲突被静默忽略。
+
+过滤全部在 [HouseMapper.xml](./src/main/resources/mapper/HouseMapper.xml) 的 `findAll` 中完成：动态 WHERE 使用经纬度 BETWEEN 和阶段等值条件，`#{}` 绑定参数，`ORDER BY id ASC` 排序。带坐标范围时明确排除空坐标；无坐标范围时保留空坐标。Service 只调用一次 Mapper，Java 只转换响应对象，不筛选数据。MySQL 集成测试使用查询计数器验证一次列表调用只执行一次 Mapper 查询。
+
+请求示例：
+
+```bash
+curl -G 'http://localhost:8080/api/houses' \
+  -H 'X-User: reviewer' -H 'X-Role: VIEWER' \
+  --data-urlencode 'minLat=29' --data-urlencode 'maxLat=31' \
+  --data-urlencode 'minLng=-98' --data-urlencode 'maxLng=-96' \
+  --data-urlencode 'stage=LAND_CLEARING'
+```
+
+本阶段复用4.1的 HouseResponse，未新增照片查询或照片功能。原题要求列表包含 `id`、`permitNo`、`address`、`community`、`lat`、`lng`、`stage`、`coverPhotoUrl`、`lastPhotoBusinessDate`；这些键已全部提供，后两项在4.4补齐，目前固定返回 null，真实照片数据联动留到第6、7步完成。详情接口、上传、封面设置、阶段推进和统计均未在4.2开发。
+
+4.2首次新增31项 MVC 用例、2项真实 MySQL 列表用例；独立参数兼容补充14项 MVC 用例，并扩展原 MySQL 用例验证两种参数形式结果一致、独立参数与 stage 组合和单边界过滤。复用现有测试配置和随机隔离库，不增加依赖或修改 V1。`./mvnw test` 为226项（214通过、0失败/错误、12项默认跳过）；现有 MySQL 集成命令的12项测试也全部通过。首次4.2测试结果保留在 [4.2 AI 使用摘要](./docs/ai-log/2026-10-12-stage-4.2.md)。
+
+4.3提供 `GET /api/houses/{id}`，沿用拦截器认证，ADMIN、SITE_MANAGER、VIEWER 均可跨社区读取，未认证返回401。ID 必须能转换为正的64位整数；非数值、小数、溢出、零或负数返回400，合法 ID 不存在返回404。错误复用现有 JSON 结构。
+
+详情使用独立 [HouseDetailResponse](./src/main/java/com/example/constructiontracker/dto/HouseDetailResponse.java)，返回平铺的全部房屋基本字段（包括来源、获取时间、创建者、创建业务日、更新时间和已有 coverPhotoId）以及 `photos` 数组；创建和列表共用 HouseResponse，4.4仅补充两个可空照片字段，保留原有字段及状态码。无照片为 `[]`。照片包含 ID、房屋 ID、上传时阶段、定位状态、拍摄/上传时间、拍摄时间来源、业务日、上传者、原始文件名、类型、大小及 GPS/距离元数据；不返回内部存储键或内容哈希。时间戳转换为带 `Z` 的 UTC，业务日保留数据库日期。
+
+详情采用固定两次 SQL：HouseMapper 的 `findById` 按主键查询房屋，存在后 `findPhotosByHouseId` 按 house_id 一次读取全部关联照片，使用 `ORDER BY taken_at ASC, id ASC` 保证拍摄时间升序和同时间下的稳定顺序。不存在的房屋只执行第一次查询；不逐张查询或在 Java 排序，无 N+1。所有 SQL 写在现有 HouseMapper.xml，参数使用 `#{}` 绑定，复用现有 house resultMap。
+
+```bash
+curl 'http://localhost:8080/api/houses/1' -H 'X-User: reviewer' -H 'X-Role: VIEWER'
+```
+
+照片只读取现有 photo 表元数据，不实现上传、EXIF 解析、文件服务、封面设置或阶段推进。PhotoResponse 的文件 URL，以及列表 coverPhotoUrl/lastPhotoBusinessDate 的真实数据联动，仍待后续照片步骤补齐；两个列表字段当前返回 null，不生成尚不可访问的占位 URL。
+
+新增5项 Service 单元测试、13项 MVC 用例及2项真实 MySQL 详情用例，复用已有隔离库与查询计数器。`./mvnw test` 为246项（232通过、0失败/错误、14项默认跳过）；单独 MySQL 集成测试14项全部通过，包含原有迁移、创建、列表及新增详情验证。覆盖无照片、404、非法ID、三种角色跨社区读取、UTC、照片归属、排序及固定查询次数。记录见 [4.3 AI 使用摘要](./docs/ai-log/2026-10-13-stage-4.3.md)。
+
+4.4已完成原题对照验收，用户确认手工验收通过。唯一阻塞项为列表缺少两个照片字段，已在 HouseResponse 中最小补齐，并用字段级 Jackson 配置保证 null 键仍序列化。非空列表 MockMvc 测试和真实 HTTP 响应均验证 `coverPhotoUrl: null`、`lastPhotoBusinessDate: null`；完整回归仍为246项（232通过、14项默认跳过、0失败/错误）。第4阶段结论为 PASS；null 占位不代表原题照片联动最终完成，后续仍须补齐。记录见 [4.4 AI 使用与验收记录](./docs/ai-log/2026-10-13-stage-4.4.md)。
 
 ## 3. 数据获取与导入
 
@@ -260,7 +332,7 @@ LAND_CLEARING → FOUNDATION → FRAMING → MEP → INTERIOR → CO_READY
 | 方法 | 路径 | 主要要求 | 成功状态 |
 | --- | --- | --- | --- |
 | `POST` | `/api/houses` | 仅 `ADMIN`；字段：`permitNo`、`address`、`community`、`lat`、`lng` | 新建 `201`；`permitNo` 已存在返回 `200` 和已有记录 |
-| `GET` | `/api/houses` | 支持 `minLat`、`maxLat`、`minLng`、`maxLng`、`stage` 筛选；列表查询不能逐栋查库 | `200` |
+| `GET` | `/api/houses` | 支持 `minLat`、`maxLat`、`minLng`、`maxLng`、`stage`；兼容 bbox，一次 SQL 查询，按 ID 升序 | `200` |
 | `GET` | `/api/houses/{id}` | 返回详情和按拍摄时间排序的 `photos` 数组 | `200` |
 | `POST` | `/api/houses/{id}/photos` | 字段名为 `file`；校验真实类型、大小、EXIF 和内容去重 | 新照片 `201`；重复照片 `200`；类型错误 `415`；超限 `413` |
 | `PUT` | `/api/houses/{id}/cover` | 请求体 `{"photoId":...}`；照片不属于该房屋返回 `422` | `200` |
@@ -286,6 +358,38 @@ LAND_CLEARING → FOUNDATION → FRAMING → MEP → INTERIOR → CO_READY
 11. **完善交付文档**：写明启动方式、测试方式、数据来源、坐标处理、并发/去重/权限/时区设计、取舍、未完成项和至少两个 AI 不良建议及修正过程。
 12. **分阶段提交**：至少形成 8 次有意义提交，并在最终提交前执行 `./mvnw test`、检查敏感信息、确认 `docs/ai-log/` 和仓库内容符合提交要求。
 
+### 2026-10-13 开发与交付计划补充
+
+本日计划是上述实现步骤的执行优先级补充，不代表功能已经完成。正式提交截止时间为 **2026-10-14 11:00（Asia/Shanghai）**。今日推进时段为 **08:00–12:00、15:00–20:00**；这两个时段内也必须预留代码测试验收、文档整理及技术面试准备时间，不全部用于新增功能。**最迟今日20:00停止新增业务功能**，之后以测试、交付整理和代码理解为主。
+
+| 顺序 | 对应步骤 | 目标性质 | 执行范围与验收重点 |
+| --- | --- | --- | --- |
+| 第一阶段 | 4.4 房屋接口集成验收 | 必须优先完成 | 对照原题检查现有创建、列表、详情 API，核对权限、数据库操作、许可证幂等、异常状态码和自动化测试；优先修复实际发现的问题，明确通过项、失败项及后续待完成项。未完成4.4验收前，不进入后续开发 |
+| 第二阶段 | 第5步：真实数据获取与导入 | 必做目标 | 获取并通过 POST /api/houses 导入不少于200条真实建筑许可或在建项目记录，保存来源 URL 和获取时间；明确缺失/无法解析坐标策略，处理重复许可证，验证脚本重复运行不新增重复房屋；完成对应测试和验收 |
+| 第三阶段 | 第6步：照片上传 | 必做目标 | 完整实现原题的内容识别、大小、安全存储、去重、EXIF、定位、时区、并发和状态码要求，覆盖正常流程、异常及边界，完成自动化测试和验收 |
+| 第四阶段 | 第7步：封面与详情完善 | 仅时间允许时进行 | 在前述必做目标完成且测试、文档、面试准备时间有保障后，实现封面设置及照片归属校验，完善现有详情和地图封面展示，并完成必要测试 |
+
+真实数据必须来自符合使用条款的公开数据源，获取前核对使用规则和 robots 规则，按要求限速。导入只能调用服务的 POST /api/houses，不能直接写数据库；测试夹具不计入200条真实数据。仓库只提交获取/导入脚本和不超过50条样例，不提交大型原始数据文件。
+
+照片上传必须完整覆盖以下要求，不能只完成正常流程：
+
+- Multipart 上传，字段名为 file；依据文件内容识别 JPEG、PNG、WebP，不只相信扩展名或客户端 MIME。
+- 单张最大10 MB，沿用现有十进制口径10,000,000字节，恰好上限允许；真实文件大小与 HTTP 上传边界均需验证。
+- 使用可配置本地目录和服务端安全文件名，不拼接不可信原始文件名；新照片不覆盖旧照片。
+- 服务端计算 SHA-256，同一房屋相同内容返回已有照片；并发上传不能丢失或新增重复记录。
+- 提取 EXIF 拍摄时间和 GPS；距离不超过200米为 VERIFIED，超过为 SUSPECT，没有定位或无法计算距离时为 UNKNOWN，覆盖200米边界。
+- 无时区 EXIF 按 America/Chicago 解释；缺失拍摄时间使用上传时刻计算业务日；UTC时间戳与 businessDate 分别保存，覆盖时区和夏令时边界。
+- 沿用角色与社区授权：ADMIN可操作所有社区，SITE_MANAGER仅可上传自己社区的房屋，VIEWER禁止修改；目标房屋社区从数据库读取。
+- 新照片201、内容重复200、类型错误415、超限413，认证失败401、权限不足403；响应提供原题要求的照片 ID、定位状态、拍摄时间、业务日和可访问 URL，完成对应自动化及真实数据库验证。
+
+**本日暂不开发第8步施工阶段推进、第9步汇总统计及超过14天未更新照片判断**。这些仍属于原题最终要求，按本日范围保留为未完成项，不在 README 中声称已经实现。
+
+开发沿用现有 Java 21、Spring Boot 3、MyBatis XML、MySQL 和项目分层，不引入无关框架、额外功能或不必要重构。重要架构选择、需求歧义或较大范围修改须先说明方案与取舍，等待用户确认。时间不足时优先保证已完成模块正确且有测试，如实记录剩余工作，不通过省略异常、并发或边界规则来宣称完整，也不延后20:00的新增功能停止时间。
+
+测试验收贯穿每个模块。交付整理包括 README 中真实的完成状态与取舍、运行和测试说明、数据来源、AI完整对话及实际技术讨论/问题/修正记录，不编造人工纠错案例。Git保持小步、有意义的提交，遵守原题至少8次提交要求，不改写已有历史；实际提交按后续明确指令执行。技术面试准备重点为代码调用链、权限位置、幂等和并发、时间与业务日、文件存储安全，以及每次提交的设计决定。
+
+计划同步时仅记录计划，后续已按明确授权完成4.4验收及最小修复，第4阶段为 PASS。第5步及后续开发等待新的明确指令；本次阶段提交不启动数据导入或照片业务。
+
 ## 7. 并发、去重与关键设计备忘
 
 - **照片并发上传**：内容哈希由服务端计算；数据库建立房屋范围内的唯一约束（例如 `house_id + content_hash`），重复插入时捕获唯一键冲突并查询返回已有记录。文件写入应使用临时文件和安全命名，避免并发覆盖。
@@ -305,7 +409,7 @@ LAND_CLEARING → FOUNDATION → FRAMING → MEP → INTERIOR → CO_READY
 - [ ] JPEG/PNG/WebP、10 MB、真实文件类型和 EXIF 规则均已覆盖。
 - [ ] `VERIFIED`、`SUSPECT`、`UNKNOWN`、时区和业务日规则正确。
 - [x] `ADMIN`、`SITE_MANAGER`、`VIEWER`、`401`、`403` 已测试。
-- [ ] 地图列表没有 N+1 查询。
+- [x] 地图列表没有 N+1 查询。
 - [ ] 提交记录不少于 8 次，AI 日志和数据脚本已提交，未提交原始大文件。
 - [ ] README 已写明并发、去重、权限、时区、取舍、未完成项和 AI 修正案例。
 
@@ -317,9 +421,11 @@ LAND_CLEARING → FOUNDATION → FRAMING → MEP → INTERIOR → CO_READY
 | --- | --- | --- |
 | 真实数据与导入脚本 | 尚未导入200条真实记录 | 后续通过 POST /api/houses 导入，保存来源和获取时间 |
 | 请求头认证与角色社区授权 | 组件和自动化验收完成，人工审查待确认 | 后续业务 Service 从数据库读取资源所属社区后调用授权组件 |
-| 房屋、照片等业务模型与接口 | 尚未实现 | 后续按推荐步骤实现 |
+| 房屋创建接口 | 第4阶段验收通过 | 保留201/200幂等及 ADMIN 创建权限 |
+| 房屋列表 | 第4阶段验收通过，两个照片字段存在且为 null | coverPhotoUrl、lastPhotoBusinessDate 的真实数据联动待第6、7步补齐 |
+| 房屋详情 | 第4阶段验收通过，已返回房屋信息与照片元数据 | 文件访问 URL 待照片存储步骤补齐 |
 | 照片、阶段推进与汇总 API | 只有数据库约束及 SQL 验证 | 后续补齐文件处理、事务、HTTP 与并发测试 |
-| AI 日志与最终交付说明 | 已有第三阶段脱敏摘要 | 完整对话导出及至少两个真实 AI 不良建议和修正案例仍待整理 |
+| AI 日志与最终交付说明 | 已有第三阶段及4.1—4.4脱敏摘要 | 完整对话导出及至少两个真实 AI 不良建议和修正案例仍待整理 |
 
 ## 10. 题面来源
 
