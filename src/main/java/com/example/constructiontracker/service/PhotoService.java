@@ -19,6 +19,7 @@ import javax.imageio.ImageIO;
 import javax.imageio.stream.MemoryCacheImageInputStream;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.file.NoSuchFileException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -38,14 +39,16 @@ public class PhotoService {
     private final AuthorizationService authorization;
     private final LocalPhotoStorage storage;
     private final Clock clock;
+    private final PhotoExifParser exifParser;
 
     public PhotoService(HouseMapper houses, PhotoMapper photos, AuthorizationService authorization,
-                        LocalPhotoStorage storage, Clock clock) {
+                        LocalPhotoStorage storage, Clock clock, PhotoExifParser exifParser) {
         this.houses = houses;
         this.photos = photos;
         this.authorization = authorization;
         this.storage = storage;
         this.clock = clock;
+        this.exifParser = exifParser;
     }
 
     public UploadResult upload(Long houseId, MultipartFile file, UserIdentity identity) {
@@ -71,11 +74,15 @@ public class PhotoService {
 
         var instant = clock.instant().truncatedTo(ChronoUnit.MICROS);
         var utc = LocalDateTime.ofInstant(instant, ZoneOffset.UTC);
-        // 6.1 has not parsed EXIF/GPS. These are explicit upload-time fallbacks,
-        // not claims that the original bytes lack metadata; original bytes are retained.
-        var photo = new PhotoMetadata(null, houseId, house.stage(), "UNKNOWN", utc, "UPLOAD",
-                instant.atZone(BUSINESS_ZONE).toLocalDate(), utc, identity.username(),
-                originalName(file.getOriginalFilename()), contentType, (long) content.length, null, null, null);
+        var exif = exifParser.parse(content, contentType, instant);
+        Double distance = exif.gpsLat() == null || house.lat() == null || house.lng() == null ? null
+                : distanceMeters(house.lat(), house.lng(), exif.gpsLat(), exif.gpsLng());
+        String status = distance == null ? "UNKNOWN" : locationStatus(distance);
+        var photo = new PhotoMetadata(null, houseId, house.stage(), status,
+                LocalDateTime.ofInstant(exif.takenAt(), ZoneOffset.UTC), exif.takenAtSource(),
+                exif.takenAt().atZone(BUSINESS_ZONE).toLocalDate(), utc, identity.username(),
+                originalName(file.getOriginalFilename()), contentType, (long) content.length,
+                exif.gpsLat(), exif.gpsLng(), distance);
         String key;
         try { key = storage.save(content, contentType); }
         catch (IOException ex) { throw failure("照片文件保存失败", ex); }
@@ -159,6 +166,17 @@ public class PhotoService {
         try { return MessageDigest.getInstance("SHA-256").digest(content); }
         catch (NoSuchAlgorithmException ex) { throw new IllegalStateException(ex); }
     }
+
+    static double distanceMeters(BigDecimal houseLat, BigDecimal houseLng, BigDecimal photoLat, BigDecimal photoLng) {
+        double lat1 = Math.toRadians(houseLat.doubleValue()), lat2 = Math.toRadians(photoLat.doubleValue());
+        double dLat = lat2 - lat1, dLng = Math.toRadians(photoLng.doubleValue() - houseLng.doubleValue());
+        double a = Math.pow(Math.sin(dLat / 2), 2)
+                + Math.cos(lat1) * Math.cos(lat2) * Math.pow(Math.sin(dLng / 2), 2);
+        a = Math.max(0, Math.min(1, a));
+        return 2 * 6_371_008.8 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    }
+
+    static String locationStatus(double distance) { return distance <= 200 ? "VERIFIED" : "SUSPECT"; }
 
     private String originalName(String name) {
         if (name == null) return null;

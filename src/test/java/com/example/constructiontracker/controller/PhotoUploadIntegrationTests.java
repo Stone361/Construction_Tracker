@@ -24,6 +24,7 @@ import org.springframework.test.context.jdbc.Sql;
 import org.springframework.util.LinkedMultiValueMap;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -110,6 +111,54 @@ class PhotoUploadIntegrationTests {
         assertThat(other.getBody().path("id")).isNotEqualTo(first.getBody().path("id"));
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM photo", Integer.class)).isEqualTo(2);
         try (var files = Files.list(STORAGE)) { assertThat(files.count()).isEqualTo(2); }
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"jpeg", "png", "webp"})
+    void realExifUploadPersistsTimeGpsAndOriginalBytes(String format) throws Exception {
+        jdbc.update("UPDATE house SET lat=30, lng=-97 WHERE id=1");
+        var gps = new PhotoTestFiles.Gps("N", new long[][]{{30, 1}, {0, 1}, {0, 1}},
+                "W", new long[][]{{97, 1}, {0, 1}, {0, 1}});
+        byte[] bytes = PhotoTestFiles.withExif(format,
+                PhotoTestFiles.exif("2026:07:01 00:30:00", "+09:00", "123456789", gps));
+        var response = upload(1, bytes, "original." + format, "image/" + format, "ADMIN", null);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        var body = response.getBody();
+        assertThat(body.path("takenAt").asText()).isEqualTo("2026-06-30T15:30:00.123456Z");
+        assertThat(body.path("uploadedAt").asText()).isEqualTo("2026-07-01T04:59:59.123456Z");
+        assertThat(body.path("takenAtSource").asText()).isEqualTo("EXIF");
+        assertThat(body.path("businessDate").asText()).isEqualTo("2026-06-30");
+        assertThat(body.path("locationStatus").asText()).isEqualTo("VERIFIED");
+        assertThat(body.path("gpsLat").decimalValue()).isEqualByComparingTo("30");
+        assertThat(body.path("gpsLng").decimalValue()).isEqualByComparingTo("-97");
+        assertThat(body.path("distanceM").doubleValue()).isZero();
+        long id = body.path("id").asLong();
+        assertThat(jdbc.queryForObject("SELECT taken_at FROM photo WHERE id=?", java.time.LocalDateTime.class, id))
+                .isEqualTo(java.time.LocalDateTime.parse("2026-06-30T15:30:00.123456"));
+        assertThat(jdbc.queryForObject("SELECT gps_lat FROM photo WHERE id=?", BigDecimal.class, id)).isEqualByComparingTo("30");
+        String key = jdbc.queryForObject("SELECT storage_key FROM photo WHERE id=?", String.class, id);
+        assertThat(Files.readAllBytes(STORAGE.resolve(key))).isEqualTo(bytes);
+        var repeat = upload(1, bytes, "renamed.png", "text/plain", "ADMIN", null);
+        assertThat(repeat.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(repeat.getBody()).isEqualTo(body);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"jpeg", "png", "webp"})
+    void validImageWithInvalidExifStillUploadsWithFallback(String format) throws Exception {
+        for (byte[] exif : new byte[][]{PhotoTestFiles.exif("2026:02:30 12:00:00", null, null, null), new byte[]{'I', 'I', 42}}) {
+            byte[] bytes = PhotoTestFiles.withExif(format, exif);
+            var response = upload(1, bytes, "invalid-exif." + format, "image/" + format, "ADMIN", null);
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+            var body = response.getBody();
+            assertThat(body.path("takenAtSource").asText()).isEqualTo("UPLOAD");
+            assertThat(body.path("takenAt").asText()).isEqualTo(body.path("uploadedAt").asText());
+            assertThat(body.path("businessDate").asText()).isEqualTo("2026-06-30");
+            assertThat(body.path("locationStatus").asText()).isEqualTo("UNKNOWN");
+            assertThat(body.path("gpsLat").isNull()).isTrue();
+            String key = jdbc.queryForObject("SELECT storage_key FROM photo WHERE id=?", String.class, body.path("id").asLong());
+            assertThat(Files.readAllBytes(STORAGE.resolve(key))).isEqualTo(bytes);
+        }
     }
 
     @Test

@@ -10,6 +10,12 @@ import com.example.constructiontracker.dto.CreateHouseRequest;
 import com.example.constructiontracker.dto.HouseListQuery;
 import com.example.constructiontracker.dto.PhotoResponse;
 import com.example.constructiontracker.exception.BusinessException;
+import com.example.constructiontracker.exception.GlobalExceptionHandler;
+import com.example.constructiontracker.controller.PhotoController;
+import com.example.constructiontracker.auth.AuthenticationInterceptor;
+import com.example.constructiontracker.auth.HeaderIdentityParser;
+import com.example.constructiontracker.domain.PhotoFile;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.http.HttpStatus;
 import com.example.constructiontracker.mapper.HouseMapper;
 import com.example.constructiontracker.service.AuthorizationService;
@@ -17,9 +23,14 @@ import com.example.constructiontracker.service.HouseService;
 import com.example.constructiontracker.PhotoTestFiles;
 import com.example.constructiontracker.mapper.PhotoMapper;
 import com.example.constructiontracker.service.PhotoService;
+import com.example.constructiontracker.service.PhotoExifParser;
 import com.example.constructiontracker.service.LocalPhotoStorage;
 import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.mock.web.MockHttpServletResponse;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import org.junit.jupiter.api.io.TempDir;
 import org.apache.ibatis.builder.xml.XMLMapperBuilder;
 import org.apache.ibatis.mapping.Environment;
@@ -37,6 +48,10 @@ import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.mybatis.spring.SqlSessionTemplate;
 import org.mybatis.spring.transaction.SpringManagedTransactionFactory;
@@ -58,8 +73,13 @@ import java.time.ZoneOffset;
 import java.util.Properties;
 import java.util.List;
 import java.util.UUID;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.HexFormat;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -67,6 +87,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 
 /** 与现有 MySQL 验证一致：仅在本次新建的随机测试库执行 V1，绝不连接正式库写数据。 */
 @EnabledIfSystemProperty(named = "mysql.integration", matches = "true")
@@ -104,6 +125,12 @@ class MySqlHouseCreationTests {
         assertThat(Flyway.configure().dataSource(url, "root", password).locations("classpath:db/migration")
                 .cleanDisabled(true).baselineOnMigrate(false).load().migrate().migrationsExecuted).isEqualTo(1);
         var source = new DriverManagerDataSource(url, "root", password);
+        // Bound JDBC waits as well as barriers/futures; only this isolated test datasource is affected.
+        var connectionProperties = new Properties();
+        connectionProperties.setProperty("connectTimeout", "5000");
+        connectionProperties.setProperty("socketTimeout", "15000");
+        connectionProperties.setProperty("sessionVariables", "innodb_lock_wait_timeout=5");
+        source.setConnectionProperties(connectionProperties);
         jdbc = new JdbcTemplate(source);
         var configuration = new Configuration(new Environment("house-mysql-test", new SpringManagedTransactionFactory(), source));
         configuration.addInterceptor(QUERY_COUNTER);
@@ -128,12 +155,226 @@ class MySqlHouseCreationTests {
         }
     }
 
+    @ParameterizedTest
+    @ValueSource(ints = {2, 5})
+    @Timeout(45)
+    void concurrentIdenticalPhotosReturnOne201AndRemaining200(int requests) throws Exception {
+        var house = service.create(request("mysql-photo-same-" + requests, null, null), ADMIN).house();
+        Path directory = Files.createDirectory(photoDirectory.resolve("same-" + requests));
+        byte[] content = PhotoTestFiles.withExif("png",
+                PhotoTestFiles.exif("2026:06:30 12:00:00", "-05:00", "123456", null));
+        var inputs = new ArrayList<byte[]>();
+        for (int i = 0; i < requests; i++) inputs.add(content);
+        var conflicts = new AtomicInteger();
+        var responses = concurrentUploads(photoMvc(racingPhotos(requests, conflicts), directory), house.id(), inputs);
+        assertThat(responses).extracting(MockHttpServletResponse::getStatus)
+                .containsOnly(201, 200).filteredOn(status -> status == 201).hasSize(1);
+        assertThat(conflicts.get()).isEqualTo(requests - 1); // Actual MySQL exceptions, not a simulated race.
+        var json = new ObjectMapper();
+        var original = json.readTree(responses.getFirst().getContentAsString());
+        for (var response : responses) {
+            assertThat(response.getContentType()).startsWith("application/json");
+            assertThat(json.readTree(response.getContentAsString())).isEqualTo(original);
+        }
+        assertThat(jdbc.queryForObject("SELECT id FROM photo WHERE house_id=?", Long.class, house.id()))
+                .isEqualTo(original.path("id").asLong());
+        assertStoredFiles(house.id(), directory, List.of(content));
+    }
+
+    @Test
+    @Timeout(45)
+    void concurrentDifferentPhotosAllReturn201AndKeepTheirOwnBytes() throws Exception {
+        var house = service.create(request("mysql-photo-different", null, null), ADMIN).house();
+        Path directory = Files.createDirectory(photoDirectory.resolve("different"));
+        var inputs = new ArrayList<byte[]>();
+        String[] formats = {"jpeg", "png", "webp"};
+        for (int i = 0; i < 5; i++) {
+            inputs.add(PhotoTestFiles.withExif(formats[i % formats.length],
+                    PhotoTestFiles.exif("2026:06:0" + (i + 1) + " 12:00:00", "-05:00", null, null)));
+        }
+        var conflicts = new AtomicInteger();
+        var responses = concurrentUploads(photoMvc(racingPhotos(inputs.size(), conflicts), directory), house.id(), inputs);
+        assertThat(responses).extracting(MockHttpServletResponse::getStatus).containsOnly(201);
+        assertThat(conflicts.get()).isZero();
+        var json = new ObjectMapper();
+        var ids = new ArrayList<Long>();
+        for (int i = 0; i < inputs.size(); i++) {
+            long id = json.readTree(responses.get(i).getContentAsString()).path("id").asLong();
+            ids.add(id);
+            String key = jdbc.queryForObject("SELECT storage_key FROM photo WHERE id=? AND house_id=?", String.class, id, house.id());
+            assertThat(Files.readAllBytes(directory.resolve(key))).isEqualTo(inputs.get(i));
+        }
+        assertThat(ids).doesNotHaveDuplicates();
+        assertStoredFiles(house.id(), directory, inputs);
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"CHECK", "STORAGE_KEY"})
+    @Timeout(30)
+    void nonPhotoDuplicateDatabaseErrorsRemain500AndPreserveExistingFiles(String failure) throws Exception {
+        var house = service.create(request("mysql-photo-error-" + failure, null, null), ADMIN).house();
+        Path directory = Files.createDirectory(photoDirectory.resolve("error-" + failure));
+        byte[] original = PhotoTestFiles.image("png"), candidate = PhotoTestFiles.image("webp");
+        var uploads = new PhotoService(mapper, photos, new AuthorizationService(),
+                new LocalPhotoStorage(directory.toString()), CLOCK, new PhotoExifParser());
+        var saved = uploads.upload(house.id(), new MockMultipartFile("file", "original.png", "image/png", original), ADMIN).photo();
+        String originalKey = jdbc.queryForObject("SELECT storage_key FROM photo WHERE id=?", String.class, saved.id());
+        var errorCode = new AtomicInteger();
+        var reads = new AtomicInteger();
+        PhotoMapper failing = new PhotoMapper() {
+            public PhotoMetadata findByHash(Long id, byte[] hash) { reads.incrementAndGet(); return photos.findByHash(id, hash); }
+            public PhotoFile findFile(Long id, Long photo) { return photos.findFile(id, photo); }
+            public int insert(PhotoMetadata p, byte[] hash, String key) {
+                try {
+                    if (failure.equals("STORAGE_KEY")) return photos.insert(p, hash, originalKey);
+                    var invalid = new PhotoMetadata(p.id(), p.houseId(), p.stage(), p.locationStatus(),
+                            p.takenAt(), p.takenAtSource(), p.businessDate(), p.uploadedAt(), p.uploadedBy(),
+                            p.originalFilename(), p.contentType(), 0L, p.gpsLat(), p.gpsLng(), p.distanceM());
+                    return photos.insert(invalid, hash, key);
+                } catch (DataAccessException ex) {
+                    var cause = org.springframework.core.NestedExceptionUtils.getMostSpecificCause(ex);
+                    if (cause instanceof java.sql.SQLException sql) errorCode.set(sql.getErrorCode());
+                    throw ex;
+                }
+            }
+        };
+        var response = photoMvc(failing, directory).perform(multipart("/api/houses/{id}/photos", house.id())
+                .file(new MockMultipartFile("file", "candidate.webp", "image/webp", candidate))
+                .header("X-User", ADMIN.username()).header("X-Role", "ADMIN")).andReturn().getResponse();
+        assertThat(response.getStatus()).isEqualTo(500);
+        assertThat(new ObjectMapper().readTree(response.getContentAsString()).path("code").asText()).isEqualTo("INTERNAL_SERVER_ERROR");
+        assertThat(errorCode.get()).isEqualTo(failure.equals("CHECK") ? 3819 : 1062);
+        assertThat(reads.get()).isEqualTo(failure.equals("CHECK") ? 1 : 2);
+        assertThat(photos.findByHash(house.id(), java.security.MessageDigest.getInstance("SHA-256").digest(original))).isEqualTo(saved);
+        assertStoredFiles(house.id(), directory, List.of(original));
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"ACK_RESOURCE", "ACK_RECOVERABLE", "READ_AFTER_INSERT"})
+    @Timeout(30)
+    void committedPhotoSurvivesInjectedInsertOrReadFailure(String failure) throws Exception {
+        var house = service.create(request("mysql-photo-uncertain-" + failure, null, null), ADMIN).house();
+        Path directory = Files.createDirectory(photoDirectory.resolve("uncertain-" + failure));
+        byte[] content = PhotoTestFiles.withExif("png",
+                PhotoTestFiles.exif("2026:06:30 12:00:00", "-05:00", "123456", null));
+        var reads = new AtomicInteger();
+        PhotoMapper uncertain = new PhotoMapper() {
+            public PhotoMetadata findByHash(Long id, byte[] hash) {
+                if (reads.incrementAndGet() == 2 && failure.equals("READ_AFTER_INSERT")) {
+                    throw new org.springframework.dao.DataAccessResourceFailureException("injected post-insert read failure");
+                }
+                return photos.findByHash(id, hash);
+            }
+            public int insert(PhotoMetadata photo, byte[] hash, String key) {
+                int inserted = photos.insert(photo, hash, key); // Real autocommit INSERT finishes first.
+                if (failure.equals("ACK_RESOURCE")) {
+                    throw new org.springframework.dao.DataAccessResourceFailureException("injected lost acknowledgement");
+                }
+                if (failure.equals("ACK_RECOVERABLE")) {
+                    throw new org.springframework.dao.RecoverableDataAccessException("injected lost acknowledgement");
+                }
+                return inserted;
+            }
+            public PhotoFile findFile(Long id, Long photo) { return photos.findFile(id, photo); }
+        };
+        var response = photoMvc(uncertain, directory).perform(multipart("/api/houses/{id}/photos", house.id())
+                .file(new MockMultipartFile("file", "original.png", "image/png", content))
+                .header("X-User", ADMIN.username()).header("X-Role", "ADMIN")).andReturn().getResponse();
+        assertThat(response.getStatus()).isEqualTo(500);
+        assertThat(response.getContentAsString()).doesNotContain("injected").doesNotContain(directory.toString());
+        byte[] hash = java.security.MessageDigest.getInstance("SHA-256").digest(content);
+        var committed = photos.findByHash(house.id(), hash);
+        assertThat(committed).isNotNull();
+        assertStoredFiles(house.id(), directory, List.of(content));
+        var retry = photoMvc(photos, directory).perform(multipart("/api/houses/{id}/photos", house.id())
+                .file(new MockMultipartFile("file", "retry.png", "image/png", content))
+                .header("X-User", ADMIN.username()).header("X-Role", "ADMIN")).andReturn().getResponse();
+        assertThat(retry.getStatus()).isEqualTo(200);
+        assertThat(new ObjectMapper().readTree(retry.getContentAsString()).path("id").asLong()).isEqualTo(committed.id());
+        assertThat(photos.findByHash(house.id(), hash)).isEqualTo(committed);
+        assertStoredFiles(house.id(), directory, List.of(content));
+    }
+
+    private static MockMvc photoMvc(PhotoMapper photoMapper, Path directory) {
+        var uploads = new PhotoService(mapper, photoMapper, new AuthorizationService(),
+                new LocalPhotoStorage(directory.toString()), CLOCK, new PhotoExifParser());
+        return MockMvcBuilders.standaloneSetup(new PhotoController(uploads))
+                .addInterceptors(new AuthenticationInterceptor(new HeaderIdentityParser()))
+                .setControllerAdvice(new GlobalExceptionHandler()).build();
+    }
+
+    private static PhotoMapper racingPhotos(int requests, AtomicInteger conflicts) {
+        var reads = new AtomicInteger();
+        var queried = new CyclicBarrier(requests);
+        var filesWritten = new CyclicBarrier(requests);
+        return new PhotoMapper() {
+            public PhotoMetadata findByHash(Long id, byte[] hash) {
+                PhotoMetadata result = photos.findByHash(id, hash);
+                if (reads.incrementAndGet() <= requests) {
+                    assertThat(result).isNull();
+                    await(queried); // All initial real SELECTs have finished before any caller continues.
+                }
+                return result;
+            }
+            public int insert(PhotoMetadata photo, byte[] hash, String key) {
+                await(filesWritten); // Every candidate file is complete before inserts compete.
+                try { return photos.insert(photo, hash, key); }
+                catch (DuplicateKeyException ex) { conflicts.incrementAndGet(); throw ex; }
+            }
+            public PhotoFile findFile(Long id, Long photo) { return photos.findFile(id, photo); }
+        };
+    }
+
+    private static void await(CyclicBarrier barrier) {
+        try { barrier.await(10, TimeUnit.SECONDS); }
+        catch (Exception ex) { throw new IllegalStateException("Photo concurrency barrier failed", ex); }
+    }
+
+    private static List<MockHttpServletResponse> concurrentUploads(MockMvc mvc, Long house, List<byte[]> inputs) throws Exception {
+        var executor = Executors.newFixedThreadPool(inputs.size());
+        try {
+            var pending = new ArrayList<Future<MockHttpServletResponse>>();
+            for (byte[] input : inputs) {
+                pending.add(executor.submit(() -> mvc.perform(multipart("/api/houses/{id}/photos", house)
+                        .file(new MockMultipartFile("file", "concurrent.image", "application/octet-stream", input))
+                        .header("X-User", ADMIN.username()).header("X-Role", "ADMIN")).andReturn().getResponse()));
+            }
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+            var results = new ArrayList<MockHttpServletResponse>();
+            for (var future : pending) results.add(future.get(Math.max(1, deadline - System.nanoTime()), TimeUnit.NANOSECONDS));
+            return results;
+        } finally {
+            executor.shutdownNow();
+            assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).as("Upload workers stop within timeout").isTrue();
+        }
+    }
+
+    private static void assertStoredFiles(Long house, Path directory, List<byte[]> expected) throws Exception {
+        Map<String, byte[]> byHash = new HashMap<>();
+        for (byte[] input : expected) byHash.put(HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(input)), input);
+        var rows = jdbc.queryForList("SELECT storage_key, content_hash, file_size FROM photo WHERE house_id=?", house);
+        assertThat(rows).hasSize(byHash.size());
+        var keys = new ArrayList<String>();
+        for (var row : rows) {
+            String hash = HexFormat.of().formatHex((byte[]) row.get("content_hash"));
+            assertThat(byHash).containsKey(hash);
+            byte[] input = byHash.get(hash);
+            String key = (String) row.get("storage_key"); keys.add(key);
+            assertThat(Files.readAllBytes(directory.resolve(key))).isEqualTo(input);
+            assertThat(((Number) row.get("file_size")).longValue()).isEqualTo(input.length);
+        }
+        assertThat(keys).doesNotHaveDuplicates();
+        try (var files = Files.list(directory)) {
+            assertThat(files.map(path -> path.getFileName().toString()).toList()).containsExactlyInAnyOrderElementsOf(keys);
+        }
+    }
+
     @Test
     void photoUploadUsesRealV1HashOwnershipAndTruthfulFallbacks() throws Exception {
         var house = service.create(request("mysql-photo-upload", null, null), ADMIN).house();
         byte[] bytes = PhotoTestFiles.image("webp");
         var storage = new LocalPhotoStorage(photoDirectory.toString());
-        var uploads = new PhotoService(mapper, photos, new AuthorizationService(), storage, CLOCK);
+        var uploads = new PhotoService(mapper, photos, new AuthorizationService(), storage, CLOCK, new PhotoExifParser());
         var file = new MockMultipartFile("file", "../../unsafe.exe", "text/plain", bytes);
         var first = uploads.upload(house.id(), file, ADMIN);
         var second = uploads.upload(house.id(), file, ADMIN);
@@ -171,7 +412,7 @@ class MySqlHouseCreationTests {
             return photos.insert(invalid, call.getArgument(1), call.getArgument(2));
         }).when(failing).insert(any(), any(), any());
         var storage = new LocalPhotoStorage(photoDirectory.toString());
-        var uploads = new PhotoService(mapper, failing, new AuthorizationService(), storage, CLOCK);
+        var uploads = new PhotoService(mapper, failing, new AuthorizationService(), storage, CLOCK, new PhotoExifParser());
         long before;
         try (var files = Files.list(photoDirectory)) { before = files.count(); }
         var file = new MockMultipartFile("file", "x.png", "image/png", PhotoTestFiles.image("png"));
@@ -184,6 +425,33 @@ class MySqlHouseCreationTests {
                 });
         try (var files = Files.list(photoDirectory)) { assertThat(files.count()).isEqualTo(before); }
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM photo WHERE house_id=?", Integer.class, house.id())).isZero();
+    }
+
+    @ParameterizedTest
+    @CsvSource({"jpeg, 30, -97, VERIFIED", "png, 30.1, -97, SUSPECT", "webp, , , UNKNOWN"})
+    void photoExifUsesRealV1TimeGpsAndLocationConstraints(String format, String lat, String lng, String status) throws Exception {
+        var house = service.create(new CreateHouseRequest("mysql-photo-exif-" + format, "Address", "North",
+                lat == null ? null : new BigDecimal(lat), lng == null ? null : new BigDecimal(lng), null, null), ADMIN).house();
+        var gps = new PhotoTestFiles.Gps("N", new long[][]{{30, 1}, {0, 1}, {0, 1}},
+                "W", new long[][]{{97, 1}, {0, 1}, {0, 1}});
+        byte[] bytes = PhotoTestFiles.withExif(format,
+                PhotoTestFiles.exif("2026:07:01 00:30:00", "+09:00", "123456789", gps));
+        var uploads = new PhotoService(mapper, photos, new AuthorizationService(),
+                new LocalPhotoStorage(photoDirectory.toString()), CLOCK, new PhotoExifParser());
+        var result = uploads.upload(house.id(), new MockMultipartFile("file", "original." + format, "image/" + format, bytes), ADMIN);
+        assertThat(result.created()).isTrue();
+        assertThat(result.photo().takenAt()).isEqualTo(LocalDateTime.parse("2026-06-30T15:30:00.123456"));
+        assertThat(result.photo().uploadedAt()).isEqualTo(LocalDateTime.parse("2026-07-01T04:59:59.123456"));
+        assertThat(result.photo().takenAtSource()).isEqualTo("EXIF");
+        assertThat(result.photo().businessDate()).isEqualTo(LocalDate.of(2026, 6, 30));
+        assertThat(result.photo().gpsLat()).isEqualByComparingTo("30");
+        assertThat(result.photo().gpsLng()).isEqualByComparingTo("-97");
+        assertThat(result.photo().locationStatus()).isEqualTo(status);
+        if (status.equals("VERIFIED")) assertThat(result.photo().distanceM()).isZero();
+        else if (status.equals("SUSPECT")) assertThat(result.photo().distanceM()).isGreaterThan(200);
+        else assertThat(result.photo().distanceM()).isNull();
+        String key = jdbc.queryForObject("SELECT storage_key FROM photo WHERE id=?", String.class, result.photo().id());
+        assertThat(Files.readAllBytes(photoDirectory.resolve(key))).isEqualTo(bytes);
     }
 
     @Test

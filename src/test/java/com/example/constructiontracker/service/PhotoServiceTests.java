@@ -3,12 +3,17 @@ package com.example.constructiontracker.service;
 import com.example.constructiontracker.PhotoTestFiles;
 import com.example.constructiontracker.domain.*;
 import com.example.constructiontracker.exception.BusinessException;
+import com.example.constructiontracker.exception.GlobalExceptionHandler;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import org.slf4j.LoggerFactory;
 import com.example.constructiontracker.mapper.HouseMapper;
 import com.example.constructiontracker.mapper.PhotoMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DuplicateKeyException;
@@ -17,6 +22,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockMultipartFile;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -34,7 +40,7 @@ class PhotoServiceTests {
     private final LocalPhotoStorage storage = mock(LocalPhotoStorage.class);
     private final UserIdentity admin = new UserIdentity("alice", UserRole.ADMIN, null);
     private final Clock clock = Clock.fixed(Instant.parse("2026-07-01T04:59:59.123456789Z"), ZoneOffset.UTC);
-    private final PhotoService service = new PhotoService(houses, photos, new AuthorizationService(), storage, clock);
+    private final PhotoService service = new PhotoService(houses, photos, new AuthorizationService(), storage, clock, new PhotoExifParser());
 
     @BeforeEach
     void houseExists() throws Exception {
@@ -68,6 +74,53 @@ class PhotoServiceTests {
         assertThat(photo.getValue().gpsLng()).isNull();
         assertThat(photo.getValue().distanceM()).isNull();
         verify(storage).save(content, "image/" + type);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"0, VERIFIED", "199.999999, VERIFIED", "200, VERIFIED", "200.000001, SUSPECT"})
+    void classifiesUnroundedDistanceAtInclusiveBoundary(double distance, String expected) {
+        assertThat(PhotoService.locationStatus(distance)).isEqualTo(expected);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"0.0017986, VERIFIED", "0.0017987, SUSPECT", "0.001798649, VERIFIED"})
+    void uploadCalculatesDistanceFromStoredPrecisionGps(String latitude, String expected) throws Exception {
+        var current = houses.findById(1L);
+        when(houses.findById(1L)).thenReturn(new House(current.id(), current.permitNo(), current.address(), current.community(),
+                BigDecimal.ZERO, BigDecimal.ZERO, current.stage(), null, current.sourceType(), null, null,
+                current.createdAt(), current.createdBusinessDate(), current.createdBy(), current.updatedAt()));
+        long seconds = new BigDecimal(latitude).multiply(BigDecimal.valueOf(3600))
+                .multiply(BigDecimal.valueOf(100_000_000)).longValueExact();
+        var gps = new PhotoTestFiles.Gps("N", new long[][]{{0, 1}, {0, 1}, {seconds, 100_000_000}},
+                "E", new long[][]{{0, 1}, {0, 1}, {0, 1}});
+        byte[] content = PhotoTestFiles.withExif("png", PhotoTestFiles.exif("2026:07:01 00:30:00", "+09:00", null, gps));
+        when(photos.findByHash(eq(1L), any())).thenReturn(null, metadata());
+        service.upload(1L, new MockMultipartFile("file", "x.png", "image/png", content), admin);
+        var captured = ArgumentCaptor.forClass(PhotoMetadata.class);
+        verify(photos).insert(captured.capture(), any(), any());
+        var photo = captured.getValue();
+        assertThat(photo.gpsLat()).isEqualByComparingTo(new BigDecimal(latitude).setScale(7, java.math.RoundingMode.HALF_UP));
+        assertThat(photo.locationStatus()).isEqualTo(expected);
+        assertThat(photo.distanceM()).isEqualTo(PhotoService.distanceMeters(BigDecimal.ZERO, BigDecimal.ZERO, photo.gpsLat(), photo.gpsLng()));
+        assertThat(photo.uploadedAt()).isEqualTo(LocalDateTime.parse("2026-07-01T04:59:59.123456"));
+        assertThat(photo.takenAt()).isEqualTo(LocalDateTime.parse("2026-06-30T15:30:00"));
+        assertThat(photo.businessDate()).isEqualTo(LocalDate.of(2026, 6, 30));
+    }
+
+    @Test
+    void missingHouseCoordinatesRetainValidGpsWithoutDistance() throws Exception {
+        var gps = new PhotoTestFiles.Gps("N", new long[][]{{0, 1}, {0, 1}, {0, 1}},
+                "E", new long[][]{{0, 1}, {0, 1}, {0, 1}});
+        byte[] content = PhotoTestFiles.withExif("png", PhotoTestFiles.exif("invalid", null, null, gps));
+        when(photos.findByHash(eq(1L), any())).thenReturn(null, metadata());
+        service.upload(1L, new MockMultipartFile("file", "x.png", "image/png", content), admin);
+        var captured = ArgumentCaptor.forClass(PhotoMetadata.class);
+        verify(photos).insert(captured.capture(), any(), any());
+        assertThat(captured.getValue().gpsLat()).isEqualByComparingTo("0");
+        assertThat(captured.getValue().gpsLng()).isEqualByComparingTo("0");
+        assertThat(captured.getValue().locationStatus()).isEqualTo("UNKNOWN");
+        assertThat(captured.getValue().distanceM()).isNull();
+        assertThat(captured.getValue().takenAtSource()).isEqualTo("UPLOAD");
     }
 
     @Test
@@ -146,6 +199,34 @@ class PhotoServiceTests {
         when(photos.insert(any(), any(), any())).thenThrow(new DataIntegrityViolationException("database failure"));
         assertThatThrownBy(() -> service.upload(1L, file(), admin)).isInstanceOf(DataIntegrityViolationException.class);
         verify(storage).delete("owned-key");
+    }
+
+    @Test
+    void compensationFailureKeepsOriginalAndSuppressedExceptionInServerLog() throws Exception {
+        var database = new DataIntegrityViolationException("private database detail");
+        var cleanup = new IOException("private cleanup path");
+        when(photos.insert(any(), any(), any())).thenThrow(database);
+        doThrow(cleanup).when(storage).delete("owned-key");
+        var error = catchThrowableOfType(() -> service.upload(1L, file(), admin), BusinessException.class);
+        assertThat(error.getStatus()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+        assertThat(error.getCause()).isSameAs(database);
+        assertThat(database.getSuppressed()).containsExactly(cleanup);
+        verify(storage).delete("owned-key");
+        verify(photos, times(1)).findByHash(eq(1L), any());
+        var logger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(GlobalExceptionHandler.class);
+        var events = new ListAppender<ILoggingEvent>();
+        events.start(); logger.addAppender(events);
+        try {
+            var response = new GlobalExceptionHandler().handleBusinessException(error);
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.INTERNAL_SERVER_ERROR);
+            assertThat(response.getBody().message()).isEqualTo("清理未入库照片失败");
+            assertThat(response.getBody().message()).doesNotContain("private");
+            assertThat(events.list).hasSize(1);
+            var logged = events.list.getFirst().getThrowableProxy();
+            assertThat(logged.getCause().getMessage()).isEqualTo(database.getMessage());
+            assertThat(logged.getCause().getSuppressed()).hasSize(1);
+            assertThat(logged.getCause().getSuppressed()[0].getMessage()).isEqualTo(cleanup.getMessage());
+        } finally { logger.detachAppender(events); events.stop(); }
     }
 
     @Test

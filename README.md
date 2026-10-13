@@ -81,7 +81,7 @@ curl http://localhost:8080/actuator/health
 | `photo` | 照片文件元数据、上传时阶段、UTC 时间、美国中部业务日和定位状态；`house_id + content_hash`（SHA-256）唯一，复合外键保证封面属于当前房屋 |
 | `stage_history` | 成功推进的操作人、UTC 时刻及前后阶段；只允许相邻阶段推进，同一房屋的起始阶段唯一 |
 
-表使用 InnoDB；主键、唯一键、外键和 CHECK 约束通过 V1 建立。缺坐标记录可以保留，后续地图范围查询排除空坐标；无法计算照片距离时使用 `UNKNOWN`。`DATETIME(6)` 约定存 UTC，连接池会话固定 `+00:00`，业务日按 `America/Chicago` 计算。文件大小采用十进制 10 MB，即不超过 **10,000,000 字节**；6.1已实现实际内容识别、上传及大小边界校验，完整 EXIF/GPS 规则仍待后续步骤。
+表使用 InnoDB；主键、唯一键、外键和 CHECK 约束通过 V1 建立。缺坐标记录可以保留，地图范围查询排除空坐标；无法计算照片距离时使用 `UNKNOWN`。`DATETIME(6)` 约定存 UTC，连接池会话固定 `+00:00`，业务日按 `America/Chicago` 计算。文件大小采用十进制 10 MB，即不超过 **10,000,000 字节**；6.1已实现实际内容识别、上传及大小边界校验，6.2已实现EXIF拍摄时间、GPS与200米判断并通过自动化验收。
 
 Flyway 已禁用 `clean` 和自动 `baseline`，启用迁移校验，关闭 Spring 的 `schema.sql`/`data.sql` 初始化。保留现有 Docker 数据卷，不挂载另一套首启 SQL；发现未纳管的非空库时停止迁移，先核对已有结构。当前本机正式库已成功执行 V1，三张业务表已创建。
 
@@ -89,15 +89,17 @@ Flyway 已禁用 `clean` 和自动 `baseline`，启用迁移校验，关闭 Spri
 
 ```bash
 ./mvnw test
-# 默认：274 项测试，258 项通过，16 项 MySQL 集成测试跳过；框架测试使用 H2 / MVC及随机端口真实HTTP
+# 默认：329 项测试，308 项通过，21 项默认跳过；框架测试使用 H2 / MVC及随机端口真实HTTP
 
 docker compose up -d --wait
 ./mvnw -Dmysql.integration=true -Dtest=MySqlMigrationTests test
 # 可选：7 项 MySQL 集成测试使用 compose 中的 MySQL，不使用 Testcontainers
 
 ./mvnw -Dmysql.integration=true -Dtest=MySqlMigrationTests,MySqlHouseCreationTests test
-# 7项迁移测试 + 3项创建测试 + 2项列表测试 + 2项详情测试 + 2项照片测试，共16项，均使用随机命名的隔离库
+# 7项迁移测试 + 3项创建测试 + 2项列表测试 + 2项详情测试 + 13项照片测试，共27项，均使用随机命名的隔离库
 ```
+
+默认禁用MySQL时，参数化方法按方法计为跳过；启用后展开为各参数用例，因此默认跳过21项与独立MySQL运行27项的统计不同，均不是失败。
 
 MySQL 集成测试从本地 `.env` 或环境变量读取 `MYSQL_ROOT_PASSWORD`，创建随机命名的 `construction_tracker_test_<随机值>` 隔离库，执行真实 V1。测试覆盖重复迁移保留数据、许可证唯一、照片去重、封面归属、坐标与大小约束、相邻推进，以及历史汇总和时区边界；结束时只清理本次创建的测试库，不操作正式库。该组测试此前已通过；默认测试命令不连接 MySQL，也不能替代这组集成测试。
 
@@ -126,7 +128,7 @@ SELECT version, script, success FROM flyway_schema_history ORDER BY installed_ra
 - XML 的 `namespace` 必须是 Mapper 接口全限定名，语句 `id` 与方法名一致，参数使用 `#{参数名}` 绑定。
 - 可参考测试中的 [Mapper 接口](./src/test/java/com/example/constructiontracker/mapper/MyBatisSmokeMapper.java) 和 [XML 映射](./src/test/resources/mapper/MyBatisSmokeMapper.xml)。这些示例仅参与测试，不会打包到应用。
 
-当前已完成 Spring Boot 基础工程、MyBatis 接入、MySQL Compose 配置、Flyway V1 建表、身份授权、房屋创建/列表/详情接口，以及6.1照片基础上传和认证文件访问。默认框架测试启用 `test` profile，使用 H2 内存数据库及随机 HTTP 端口；MySQL 专用约束和迁移通过上面的隔离库集成测试验证。完整 EXIF/GPS、照片并发验收、封面、阶段推进及汇总仍待实现。
+当前已完成 Spring Boot 基础工程、MyBatis 接入、MySQL Compose 配置、Flyway V1 建表、身份授权、房屋创建/列表/详情接口，以及6.1照片基础上传、认证文件访问和6.2 EXIF/GPS处理。默认框架测试启用 `test` profile，使用 H2 内存数据库及随机 HTTP 端口；MySQL 专用约束和迁移通过上面的隔离库集成测试验证。6.2手工验收通过，6.3并发上传和6.4基础一致性自动化验收通过；封面、列表照片真实联动、阶段推进及汇总仍未完成。
 
 ### 基础目录结构
 
@@ -356,13 +358,41 @@ LAND_CLEARING → FOUNDATION → FRAMING → MEP → INTERIOR → CO_READY
 
 本地目录默认 `./data/local/photos`，可用 `PHOTO_STORAGE_DIRECTORY` 覆盖；该默认目录不进入Git。文件名由服务端UUID及实际格式生成，使用CREATE_NEW避免覆盖，不将原始文件名拼入路径，拒绝非法存储键及存储目录/文件符号链接。元数据SQL全部位于 [PhotoMapper.xml](./src/main/resources/mapper/PhotoMapper.xml)，复用现有photo表和照片响应对象，不修改V1。
 
-现有表要求内容哈希、拍摄时刻及业务日非空，因此6.1计算真实SHA-256并复用 `(house_id, content_hash)` 唯一约束，提供最小重复提交处理；不写虚假哈希。当前尚未解析EXIF/GPS，明确使用 `takenAtSource=UPLOAD`、真实上传时刻作为takenAt，并按America/Chicago计算上传业务日；UTC时间精度为微秒，保存上传时房屋阶段，GPS与距离为null、locationStatus为UNKNOWN。UNKNOWN在本步骤表示尚未解析定位，不能声称原始文件没有GPS。原始字节保留，完整EXIF时间、GPS、200米判断及并发上传专项验收留到6.2—6.4。
+现有表要求内容哈希、拍摄时刻及业务日非空，因此6.1计算真实SHA-256并复用 `(house_id, content_hash)` 唯一约束，提供最小重复提交处理；不写虚假哈希。6.1验收时尚未解析EXIF/GPS，明确使用 `takenAtSource=UPLOAD`、真实上传时刻作为takenAt，并按America/Chicago计算上传业务日；UTC时间精度为微秒，保存上传时房屋阶段，GPS与距离为null、locationStatus为UNKNOWN。当时UNKNOWN表示尚未解析定位，不声称原始文件没有GPS。原始字节保留；后续6.2已补齐时间与GPS，去重专项及并发验收仍留到6.3、6.4。
 
 响应包含 `id`、`locationStatus`、`takenAt`、`businessDate`、`url` 等字段。`url` 指向 `GET /api/houses/{houseId}/photos/{photoId}/file`，所有已认证角色可以读取，查询验证照片归属，返回实际内容类型及 `X-Content-Type-Options: nosniff`。文件URL同样需要身份Header；客户端须带Header获取文件，直接使用不带身份的图片请求会返回401。
 
 文件先保存，再执行单条数据库INSERT；明确的插入失败清理本次新文件，不删除已提交照片或已有文件。数据库连接错误导致提交结果不明时保留文件并返回500，避免删除可能已入库的照片。文件系统与MySQL不是跨资源原子事务：进程崩溃、补偿删除失败或提交结果不明仍可能留下孤立文件，暂未实现自动清理机制。
 
 已执行的完整 `./mvnw test` 于2026-10-13 11:59:16结束：274项，258通过、0失败/错误、16默认跳过；本阶段新增的13项PhotoService、3项存储及10项真实HTTP/H2测试全部通过。随后启动的MySQL隔离测试于12:04:40结束：16项全部通过，其中新增2项验证实际V1哈希/归属/时间落库及真实CHECK拒绝后的文件补偿。收尾只读取这两次结果，没有重新运行测试；构建日志均为BUILD SUCCESS，未发现实际Maven解析错误。记录见 [6.1 AI使用记录](./docs/ai-log/2026-10-13-stage-6.1.md)。这仅代表6.1范围通过，不能视为原题照片功能全部完成。
+
+#### 6.2 EXIF时间、GPS及业务日期（自动化及人工验收通过）
+
+新增 [PhotoExifParser](./src/main/java/com/example/constructiontracker/service/PhotoExifParser.java)，使用 `metadata-extractor:2.21.0`，复用6.1受限字节数组及实际图片类型。JPEG由库读取APP1，PNG只读取eXIf块，WebP只读取EXIF块；TIFF遍历仅保留原始拍摄时间、偏移、小数秒和GPS经纬度，不处理缩略图、MakerNote、XMP、ICC或压缩文本。没有新增图片容器解析器，也未修改10,000,000字节上传限制。
+
+采用1 MiB的元数据读取预算，在申请段/块字节数组前检查；预算包括读取器的小型头部及JPEG APP1字节，不等于进程总内存上限。预算超限则忽略本次元数据并回退，图片上传仍可成功；不相关APP1过多也可能触发保守回退。保留原始文件，不截断或重写EXIF。
+
+优先读取DateTimeOriginal。有合法OffsetTimeOriginal时按偏移转换为Instant；没有偏移时按America/Chicago解释，春季DST缺口回退，秋季重叠选第一次出现。有效SubSecTimeOriginal补足/截断至微秒；非法小数秒忽略，但有偏移标签而偏移非法时回退。严格校验日历日期及转换后UTC时间、Chicago业务日的数据库年份范围，不使用系统默认时区。没有有效拍摄时间时takenAt等于真实uploadedAt，来源UPLOAD；有效时来源EXIF。takenAt和uploadedAt均存UTC，businessDate从同一个拍摄/回退时刻转换Chicago后计算，EXIF不能覆盖uploadedAt。不以文件修改时间、数字化时间或GPS时间替代DateTimeOriginal。
+
+GPS与时间分别解析和降级。校验完整度分秒、N/S/E/W、分母、有限数及范围，转换后四舍五入到7位小数；零坐标有效。使用最终保存精度的GPS和已查询房屋坐标计算Haversine距离，地球平均半径6,371,008.8米，不先取整距离：不超过200米VERIFIED，超过SUSPECT。GPS缺失/无效时坐标与距离为空、状态UNKNOWN；GPS有效而房屋坐标缺失时保留GPS，距离为空、状态UNKNOWN。
+
+没有更改Controller、DTO契约、Mapper SQL、Flyway V1、数据库结构、存储组件或.env。6.1的认证、格式与大小校验、哈希/重复返回、UUID、原文件及失败补偿保留；重复上传直接返回已有记录，不覆盖已有元数据，也不自动补解析6.1历史记录。
+
+2026-10-13 15:53:54的完整测试为321项：304通过、0失败/错误、17默认跳过；15:56:37的MySQL隔离测试19项全部通过，均为BUILD SUCCESS。解析单元测试32项，PhotoService21项（含原有13项），真实HTTP/H2上传16项（含原有10项）；真实EXIF夹具覆盖JPEG/PNG/WebP，核对响应、时间/GPS落库及原文件字节。MySQL新增三项分别覆盖VERIFIED、SUSPECT、房屋缺坐标的UNKNOWN并验证实际V1约束。6.2新增46项默认执行用例及3项MySQL用例；没有新增6.3/6.4专项测试。实现及真实问题见 [6.2 AI使用记录](./docs/ai-log/2026-10-13-stage-6.2.md)。
+
+用户已确认6.2手工验收通过，后续6.3/6.4结果见下节。历史照片未补解析，封面与列表照片联动仍待后续阶段。EXIF来自客户端文件且可以被修改，VERIFIED仅表示所提供GPS与房屋的计算距离符合规则；文件与数据库的跨资源一致性风险沿用6.1。
+
+#### 6.3 并发上传与6.4基础一致性（自动化验收PASS）
+
+保留6.1的真实SHA-256、`UNIQUE(house_id, content_hash)`、UUID存储及唯一键冲突处理，6.3/6.4只增加测试，没有预防性重构或新增依赖。真实MySQL并发测试使用双屏障：所有请求先完成预查，再确保候选文件写完后竞争插入。2请求同内容为1个201/1个200，5请求同内容为1个201/4个200，最终各1条记录、1份完整文件及相同响应；5份不同内容均为201，记录和文件内容逐一对应。状态码通过MockMvc执行真实Controller、认证和异常处理后读取，数据库为真实MySQL；不是从Service结果推定，也不是实际TCP并发测试。
+
+真实CHECK失败和非内容重复的存储键唯一冲突均返回500，不误判为重复照片，保留原记录及文件。屏障10秒、批量Future总期限30秒，并设置测试专用JDBC连接/读取和锁等待超时，避免依赖线程调度或无限等待。专项5项通过，后续完整MySQL运行再次通过；6.3结论PASS。
+
+6.4故障测试使用真实文件流注入写入中途、关闭及清理异常：可清理时只删除候选文件，原文件保留；清理失败保留suppressed异常，残缺候选文件可能残留。数据库补偿失败的原始异常和suppressed清理异常进入服务端日志，客户端只收到公开错误提示。真实MySQL提交后注入两类已识别确认异常或后续查询异常，均保留记录及完整文件；同内容重试200并返回原记录。未实际切断数据库网络，也未验证所有驱动异常映射。6.4专项32项通过，基础一致性结论PASS。
+
+最新完整 `./mvnw test` 于2026-10-13 16:55:28完成：329项，308通过、21默认跳过、0失败/错误；隔离MySQL测试于16:55:55完成：27项全部通过，均为BUILD SUCCESS。没有改动数据库结构、Flyway V1、.env或6.2生产实现，没有向正式库写入验收数据。记录见 [6.3—6.4 AI使用摘要](./docs/ai-log/2026-10-13-stage-6.3-6.4.md)。
+
+剩余风险：文件系统与MySQL不具备跨资源原子提交，崩溃、断电、提交结果不明或补偿失败可能留下孤立/残缺文件，尚无自动恢复与清理机制；提交不明保护依赖异常分类，不能承诺任何故障下都绝无误删。第六阶段通过的是已声明的上传业务及基础故障验收，封面和列表照片联动、阶段推进与汇总不在本次完成范围内。
 
 ### 阶段推进条件
 
@@ -483,9 +513,9 @@ LAND_CLEARING → FOUNDATION → FRAMING → MEP → INTERIOR → CO_READY
 | 房屋创建接口 | 第4阶段验收通过 | 保留201/200幂等及 ADMIN 创建权限 |
 | 房屋列表 | 第4阶段验收通过，两个照片字段存在且为 null | coverPhotoUrl、lastPhotoBusinessDate 的真实数据联动待第6、7步补齐 |
 | 房屋详情 | 第4阶段验收通过，6.1已补齐照片认证文件URL | 保持照片排序，后续补齐封面及列表真实数据联动 |
-| 照片基础上传 | 6.1自动化及人工验收通过 | 完整EXIF/GPS、200米规则、业务日期及并发专项验收留到6.2—6.4；孤立文件清理尚未实现 |
+| 照片上传与元数据 | 6.1/6.2人工验收通过；6.3并发上传及6.4基础一致性自动化PASS | 封面及列表照片联动待后续阶段；历史照片未补解析，孤立文件自动清理尚未实现 |
 | 阶段推进与汇总 API | 只有数据库约束及 SQL 验证 | 本日暂不开发，保留为未完成项 |
-| AI 日志与最终交付说明 | 已有第三阶段、4.1—4.4、5.1—5.2及6.1脱敏摘要 | 完整对话导出及真实 AI 不良建议和修正案例的最终交付整理仍待完成 |
+| AI 日志与最终交付说明 | 已有第三阶段、4.1—4.4、5.1—5.2及6.1—6.4脱敏摘要 | 完整对话导出及真实 AI 不良建议和修正案例的最终交付整理仍待完成 |
 
 ## 10. 题面来源
 
