@@ -1,6 +1,7 @@
 package com.example.constructiontracker.controller;
 
 import com.example.constructiontracker.auth.RequestIdentity;
+import com.example.constructiontracker.dto.AdvanceHouseRequest;
 import com.example.constructiontracker.dto.CreateHouseRequest;
 import com.example.constructiontracker.dto.HouseDetailResponse;
 import com.example.constructiontracker.dto.HouseListQuery;
@@ -50,6 +51,12 @@ public class HouseController {
     public HouseDetailResponse setCover(@PathVariable Long id, @Valid @RequestBody SetCoverRequest body,
                                        HttpServletRequest request) {
         return service.setCover(id, body, RequestIdentity.get(request));
+    }
+
+    @PostMapping("/{id}/advance")
+    public HouseDetailResponse advance(@PathVariable Long id, @Valid @RequestBody AdvanceHouseRequest body,
+                                       HttpServletRequest request) {
+        return service.advance(id, body, RequestIdentity.get(request));
     }
 
     @PostMapping

@@ -5,6 +5,7 @@ import com.example.constructiontracker.domain.House;
 import com.example.constructiontracker.domain.HouseListRow;
 import com.example.constructiontracker.domain.HouseSourceType;
 import com.example.constructiontracker.domain.UserIdentity;
+import com.example.constructiontracker.dto.AdvanceHouseRequest;
 import com.example.constructiontracker.dto.CreateHouseRequest;
 import com.example.constructiontracker.dto.HouseDetailResponse;
 import com.example.constructiontracker.dto.HouseListQuery;
@@ -19,6 +20,7 @@ import jakarta.validation.constraints.NotNull;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
 
 import java.time.Clock;
@@ -71,6 +73,49 @@ public class HouseService {
         LocalDateTime utc = LocalDateTime.ofInstant(clock.instant().truncatedTo(ChronoUnit.MICROS), ZoneOffset.UTC);
         // 同一封面重复设置可能没有实际字段变化，不能把影响行数为 0 误判为归属失败。
         mapper.updateCover(id, request.photoId(), utc);
+        return detail(id);
+    }
+
+    /** 阶段条件更新与审计 INSERT 共用事务；并发失败者不写入审计。 */
+    @Transactional
+    public HouseDetailResponse advance(Long id, @NotNull @Valid AdvanceHouseRequest request, UserIdentity identity) {
+        if (id == null || id <= 0) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", "房屋 ID 必须为正整数");
+        }
+        House house = mapper.findById(id);
+        if (house == null) {
+            throw new BusinessException(HttpStatus.NOT_FOUND, "NOT_FOUND", "房屋不存在");
+        }
+        authorization.requireCanManageHouse(identity, house.community());
+        if (identity.username() == null || identity.username().isBlank() || identity.username().length() > 128) {
+            throw new BusinessException(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "用户名必须为1到128个字符");
+        }
+        if (house.stage() != request.fromStage()) {
+            throw new BusinessException(HttpStatus.CONFLICT, "CONFLICT", "当前施工阶段已变化，请刷新后重试");
+        }
+        ConstructionStage next = switch (request.fromStage()) {
+            case LAND_CLEARING -> ConstructionStage.FOUNDATION;
+            case FOUNDATION -> ConstructionStage.FRAMING;
+            case FRAMING -> ConstructionStage.MEP;
+            case MEP -> ConstructionStage.INTERIOR;
+            case INTERIOR -> ConstructionStage.CO_READY;
+            case CO_READY -> null;
+        };
+        if (next == null || request.toStage() != next) {
+            throw new BusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "BUSINESS_RULE_VIOLATION",
+                    "施工阶段只能向前推进一级");
+        }
+        if (!photos.hasEligiblePhoto(id, request.fromStage())) {
+            throw new BusinessException(HttpStatus.UNPROCESSABLE_ENTITY, "BUSINESS_RULE_VIOLATION",
+                    "当前施工阶段缺少非 SUSPECT 的照片");
+        }
+        LocalDateTime utc = LocalDateTime.ofInstant(clock.instant().truncatedTo(ChronoUnit.MICROS), ZoneOffset.UTC);
+        if (mapper.advanceStage(id, request.fromStage(), request.toStage(), utc) != 1) {
+            throw new BusinessException(HttpStatus.CONFLICT, "CONFLICT", "当前施工阶段已变化，请刷新后重试");
+        }
+        if (mapper.insertStageHistory(id, request.fromStage(), request.toStage(), identity.username(), utc) != 1) {
+            throw new IllegalStateException("Stage history was not inserted");
+        }
         return detail(id);
     }
 

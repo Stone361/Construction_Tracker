@@ -30,4 +30,11 @@
         SELECT storage_key, content_type, file_size
         FROM photo WHERE house_id = #{houseId} AND id = #{photoId}
     </select>
+
+    <select id="hasEligiblePhoto" resultType="boolean">
+        SELECT EXISTS (
+            SELECT 1 FROM photo
+            WHERE house_id = #{houseId} AND stage = #{stage} AND location_status &lt;&gt; 'SUSPECT'
+        )
+    </select>
 </mapper>

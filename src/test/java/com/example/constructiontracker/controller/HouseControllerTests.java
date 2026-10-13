@@ -18,6 +18,7 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -396,6 +397,80 @@ class HouseControllerTests {
     private static Map<String, Object> sourceTime(String time) {
         var body = sourced("https://example.org/permits/1");
         body.put("sourceFetchedAt", time); return body;
+    }
+
+    @ParameterizedTest
+    @CsvSource({"ADMIN,North Austin,200", "SITE_MANAGER,North Austin,200",
+            "SITE_MANAGER,South Austin,403", "VIEWER,North Austin,403"})
+    void advanceUsesDatabaseCommunityForRolePermissions(String role, String community, int expectedStatus) throws Exception {
+        House initial = house();
+        var advanced = new House(initial.id(), initial.permitNo(), initial.address(), initial.community(),
+                initial.lat(), initial.lng(), ConstructionStage.FOUNDATION, initial.coverPhotoId(), initial.sourceType(),
+                initial.sourceUrl(), initial.sourceFetchedAt(), initial.createdAt(), initial.createdBusinessDate(),
+                initial.createdBy(), initial.updatedAt());
+        when(mapper.findById(1L)).thenReturn(initial, advanced);
+        when(photos.hasEligiblePhoto(1L, ConstructionStage.LAND_CLEARING)).thenReturn(true);
+        when(mapper.advanceStage(any(), any(), any(), any())).thenReturn(1);
+        when(mapper.insertStageHistory(any(), any(), any(), any(), any())).thenReturn(1);
+        when(mapper.findPhotosByHouseId(1L)).thenReturn(List.of());
+        var result = mvc.perform(post("/api/houses/1/advance").header("X-User", "stage-user")
+                        .header("X-Role", role).header("X-Community", community)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"fromStage\":\"LAND_CLEARING\",\"toStage\":\"FOUNDATION\",\"community\":\"North Austin\"}"))
+                .andExpect(status().is(expectedStatus))
+                .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON));
+        if (expectedStatus == 200) {
+            result.andExpect(jsonPath("$.stage").value("FOUNDATION"));
+            verify(mapper).insertStageHistory(eq(1L), eq(ConstructionStage.LAND_CLEARING),
+                    eq(ConstructionStage.FOUNDATION), eq("stage-user"), any());
+        } else {
+            result.andExpect(jsonPath("$.code").value("FORBIDDEN"));
+            verifyNoInteractions(photos);
+            verify(mapper, never()).advanceStage(any(), any(), any(), any());
+        }
+    }
+
+    @ParameterizedTest
+    @CsvSource({"FOUNDATION,FRAMING,true,1,409", "LAND_CLEARING,FRAMING,true,1,422",
+            "LAND_CLEARING,FOUNDATION,false,1,422", "LAND_CLEARING,FOUNDATION,true,0,409"})
+    void advanceMapsStageAndPhotoFailuresTo409Or422(String from, String to, boolean eligible,
+                                                   int updatedRows, int expectedStatus) throws Exception {
+        when(mapper.findById(1L)).thenReturn(house());
+        when(photos.hasEligiblePhoto(any(), any())).thenReturn(eligible);
+        when(mapper.advanceStage(any(), any(), any(), any())).thenReturn(updatedRows);
+        mvc.perform(post("/api/houses/1/advance").header("X-User", "stage-user").header("X-Role", "ADMIN")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(json.writeValueAsString(Map.of("fromStage", from, "toStage", to))))
+                .andExpect(status().is(expectedStatus))
+                .andExpect(jsonPath("$.code").value(expectedStatus == 409 ? "CONFLICT" : "BUSINESS_RULE_VIOLATION"));
+        verify(mapper, never()).insertStageHistory(any(), any(), any(), any(), any());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"{}", "{\"fromStage\":\"LAND_CLEARING\"}",
+            "{\"fromStage\":\"INVALID\",\"toStage\":\"FOUNDATION\"}", "{broken"})
+    void invalidAdvanceBodyReturns400BeforeDatabaseAccess(String body) throws Exception {
+        mvc.perform(post("/api/houses/1/advance").header("X-User", "stage-user").header("X-Role", "ADMIN")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.code").exists());
+        verifyNoInteractions(mapper, photos);
+    }
+
+    @Test
+    void unauthenticatedAdvanceReturns401() throws Exception {
+        mvc.perform(post("/api/houses/1/advance").contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"fromStage\":\"LAND_CLEARING\",\"toStage\":\"FOUNDATION\"}"))
+                .andExpect(status().isUnauthorized()).andExpect(jsonPath("$.code").value("UNAUTHORIZED"));
+        verifyNoInteractions(mapper, photos);
+    }
+
+    @Test
+    void missingAdvanceHouseReturns404() throws Exception {
+        mvc.perform(post("/api/houses/999/advance").header("X-User", "stage-user").header("X-Role", "ADMIN")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"fromStage\":\"LAND_CLEARING\",\"toStage\":\"FOUNDATION\"}"))
+                .andExpect(status().isNotFound()).andExpect(jsonPath("$.code").value("NOT_FOUND"));
+        verifyNoInteractions(photos);
     }
 
     private static Map<String, Object> validBody() {

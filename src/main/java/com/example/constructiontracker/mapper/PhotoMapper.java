@@ -1,5 +1,6 @@
 package com.example.constructiontracker.mapper;
 
+import com.example.constructiontracker.domain.ConstructionStage;
 import com.example.constructiontracker.domain.PhotoFile;
 import com.example.constructiontracker.domain.PhotoMetadata;
 import org.apache.ibatis.annotations.Mapper;
@@ -13,4 +14,6 @@ public interface PhotoMapper {
                @Param("storageKey") String storageKey);
 
     PhotoFile findFile(@Param("houseId") Long houseId, @Param("photoId") Long photoId);
+
+    boolean hasEligiblePhoto(@Param("houseId") Long houseId, @Param("stage") ConstructionStage stage);
 }

@@ -13,6 +13,7 @@ import com.example.constructiontracker.dto.PhotoResponse;
 import com.example.constructiontracker.exception.BusinessException;
 import com.example.constructiontracker.exception.GlobalExceptionHandler;
 import com.example.constructiontracker.controller.PhotoController;
+import com.example.constructiontracker.controller.HouseController;
 import com.example.constructiontracker.auth.AuthenticationInterceptor;
 import com.example.constructiontracker.auth.HeaderIdentityParser;
 import com.example.constructiontracker.domain.PhotoFile;
@@ -58,6 +59,12 @@ import org.mybatis.spring.SqlSessionTemplate;
 import org.mybatis.spring.transaction.SpringManagedTransactionFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.datasource.DriverManagerDataSource;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.aop.framework.ProxyFactory;
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
+import org.springframework.transaction.interceptor.TransactionInterceptor;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.http.MediaType;
 
 import java.io.Reader;
 import java.nio.charset.StandardCharsets;
@@ -89,6 +96,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
 /** 与现有 MySQL 验证一致：仅在本次新建的随机测试库执行 V1，绝不连接正式库写数据。 */
 @EnabledIfSystemProperty(named = "mysql.integration", matches = "true")
@@ -102,6 +110,7 @@ class MySqlHouseCreationTests {
     private static JdbcTemplate jdbc;
     private static HouseService service;
     private static PhotoMapper photos;
+    private static DataSourceTransactionManager transactionManager;
     @TempDir static Path photoDirectory;
     private static final QueryCounter QUERY_COUNTER = new QueryCounter();
 
@@ -132,6 +141,7 @@ class MySqlHouseCreationTests {
         connectionProperties.setProperty("socketTimeout", "15000");
         connectionProperties.setProperty("sessionVariables", "innodb_lock_wait_timeout=5");
         source.setConnectionProperties(connectionProperties);
+        transactionManager = new DataSourceTransactionManager(source);
         jdbc = new JdbcTemplate(source);
         var configuration = new Configuration(new Environment("house-mysql-test", new SpringManagedTransactionFactory(), source));
         configuration.addInterceptor(QUERY_COUNTER);
@@ -225,6 +235,7 @@ class MySqlHouseCreationTests {
         PhotoMapper failing = new PhotoMapper() {
             public PhotoMetadata findByHash(Long id, byte[] hash) { reads.incrementAndGet(); return photos.findByHash(id, hash); }
             public PhotoFile findFile(Long id, Long photo) { return photos.findFile(id, photo); }
+            public boolean hasEligiblePhoto(Long id, ConstructionStage stage) { return photos.hasEligiblePhoto(id, stage); }
             public int insert(PhotoMetadata p, byte[] hash, String key) {
                 try {
                     if (failure.equals("STORAGE_KEY")) return photos.insert(p, hash, originalKey);
@@ -277,6 +288,7 @@ class MySqlHouseCreationTests {
                 return inserted;
             }
             public PhotoFile findFile(Long id, Long photo) { return photos.findFile(id, photo); }
+            public boolean hasEligiblePhoto(Long id, ConstructionStage stage) { return photos.hasEligiblePhoto(id, stage); }
         };
         var response = photoMvc(uncertain, directory).perform(multipart("/api/houses/{id}/photos", house.id())
                 .file(new MockMultipartFile("file", "original.png", "image/png", content))
@@ -323,6 +335,7 @@ class MySqlHouseCreationTests {
                 catch (DuplicateKeyException ex) { conflicts.incrementAndGet(); throw ex; }
             }
             public PhotoFile findFile(Long id, Long photo) { return photos.findFile(id, photo); }
+            public boolean hasEligiblePhoto(Long id, ConstructionStage stage) { return photos.hasEligiblePhoto(id, stage); }
         };
     }
 
@@ -508,6 +521,17 @@ class MySqlHouseCreationTests {
             }
 
             @Override
+            public int advanceStage(Long id, ConstructionStage from, ConstructionStage to, LocalDateTime updatedAt) {
+                return mapper.advanceStage(id, from, to, updatedAt);
+            }
+
+            @Override
+            public int insertStageHistory(Long id, ConstructionStage from, ConstructionStage to,
+                                          String changedBy, LocalDateTime changedAt) {
+                return mapper.insertStageHistory(id, from, to, changedBy, changedAt);
+            }
+
+            @Override
             public House findById(Long id) { return mapper.findById(id); }
 
             @Override
@@ -625,6 +649,169 @@ class MySqlHouseCreationTests {
         assertThat(located.gpsLat()).isEqualByComparingTo("30.001");
         assertThat(located.gpsLng()).isEqualByComparingTo("-97");
         assertThat(located.distanceM()).isEqualTo(200.0);
+    }
+
+    @Test
+    void advanceCommitsStageAndAuditThroughSpringTransactionProxy() throws Exception {
+        House house = service.create(request("mysql-stage-success", null, null), ADMIN).house();
+        long photo = detailPhoto(house.id(), "2026-06-30T12:00:00Z", "2026-06-30", false);
+        var response = advanceRequest(stageMvc(transactionalService(mapper)), house.id(),
+                "stage-manager", "SITE_MANAGER", "North Austin");
+        assertThat(response.getStatus()).isEqualTo(200);
+        var body = new ObjectMapper().readTree(response.getContentAsString());
+        assertThat(body.path("stage").asText()).isEqualTo("FOUNDATION");
+        assertThat(body.path("photos").get(0).path("stage").asText()).isEqualTo("LAND_CLEARING");
+        assertThat(mapper.findById(house.id()).stage()).isEqualTo(ConstructionStage.FOUNDATION);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM stage_history WHERE house_id=?", Integer.class, house.id())).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT from_stage FROM stage_history WHERE house_id=?", String.class, house.id())).isEqualTo("LAND_CLEARING");
+        assertThat(jdbc.queryForObject("SELECT to_stage FROM stage_history WHERE house_id=?", String.class, house.id())).isEqualTo("FOUNDATION");
+        assertThat(jdbc.queryForObject("SELECT changed_by FROM stage_history WHERE house_id=?", String.class, house.id())).isEqualTo("stage-manager");
+        assertThat(jdbc.queryForObject("SELECT changed_at FROM stage_history WHERE house_id=?", LocalDateTime.class, house.id()))
+                .isEqualTo(LocalDateTime.parse("2026-07-01T04:59:59.123456"));
+        assertThat(jdbc.queryForObject("SELECT stage FROM photo WHERE id=?", String.class, photo)).isEqualTo("LAND_CLEARING");
+        assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+    }
+
+    @ParameterizedTest
+    @CsvSource({"NONE,false", "SUSPECT,false", "OTHER_HOUSE,false", "OTHER_STAGE,false",
+            "UNKNOWN,true", "VERIFIED,true"})
+    void advancePhotoQualificationUsesRealHouseStageAndStatusSql(String scenario, boolean eligible) throws Exception {
+        var house = service.create(new CreateHouseRequest("mysql-stage-photo-" + scenario, "Test address", "North Austin",
+                new BigDecimal("30"), new BigDecimal("-97"), null, null), ADMIN).house();
+        if (!scenario.equals("NONE")) {
+            long owner = scenario.equals("OTHER_HOUSE")
+                    ? service.create(request("mysql-stage-other-photo-owner", null, null), ADMIN).house().id() : house.id();
+            long photo = detailPhoto(owner, "2026-06-30T12:00:00Z", "2026-06-30",
+                    scenario.equals("VERIFIED") || scenario.equals("SUSPECT"));
+            if (scenario.equals("SUSPECT")) {
+                jdbc.update("UPDATE photo SET location_status='SUSPECT', distance_m=201 WHERE id=?", photo);
+            } else if (scenario.equals("OTHER_STAGE")) {
+                jdbc.update("UPDATE photo SET stage='FOUNDATION' WHERE id=?", photo);
+            }
+        }
+        assertThat(photos.hasEligiblePhoto(house.id(), ConstructionStage.LAND_CLEARING)).isEqualTo(eligible);
+        var response = advanceRequest(stageMvc(transactionalService(mapper)), house.id(), "stage-admin", "ADMIN", null);
+        assertThat(response.getStatus()).isEqualTo(eligible ? 200 : 422);
+        if (!eligible) {
+            assertThat(new ObjectMapper().readTree(response.getContentAsString()).path("code").asText()).isEqualTo("BUSINESS_RULE_VIOLATION");
+        }
+        assertThat(mapper.findById(house.id()).stage()).isEqualTo(eligible ? ConstructionStage.FOUNDATION : ConstructionStage.LAND_CLEARING);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM stage_history WHERE house_id=?", Integer.class, house.id())).isEqualTo(eligible ? 1 : 0);
+    }
+
+    @Test
+    @Timeout(45)
+    void simultaneousAdvanceRequestsCommitOnceAndReturn200And409() throws Exception {
+        House house = service.create(request("mysql-stage-race", null, null), ADMIN).house();
+        detailPhoto(house.id(), "2026-06-30T12:00:00Z", "2026-06-30", false);
+        var barrier = new CyclicBarrier(2);
+        var successfulUpdates = new AtomicInteger();
+        var rejectedUpdates = new AtomicInteger();
+        HouseMapper racing = spy(mapper);
+        doAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+            // Both requests completed stage validation and the real eligibility SELECT before either UPDATE.
+            await(barrier);
+            int updated = mapper.advanceStage(invocation.getArgument(0), invocation.getArgument(1),
+                    invocation.getArgument(2), invocation.getArgument(3));
+            if (updated == 1) successfulUpdates.incrementAndGet();
+            else rejectedUpdates.incrementAndGet();
+            return updated;
+        }).when(racing).advanceStage(any(), any(), any(), any());
+        MockMvc mvc = stageMvc(transactionalService(racing));
+        var executor = Executors.newFixedThreadPool(2);
+        var futures = new ArrayList<Future<MockHttpServletResponse>>();
+        var responses = new ArrayList<MockHttpServletResponse>();
+        try {
+            for (int i = 0; i < 2; i++) {
+                String username = "stage-racer-" + i;
+                futures.add(executor.submit(() -> advanceRequest(mvc, house.id(), username, "ADMIN", null)));
+            }
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+            for (var future : futures) responses.add(future.get(Math.max(1, deadline - System.nanoTime()), TimeUnit.NANOSECONDS));
+        } finally {
+            for (var future : futures) future.cancel(true);
+            executor.shutdownNow();
+            assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).as("Stage workers stop within timeout").isTrue();
+        }
+        assertThat(responses).extracting(MockHttpServletResponse::getStatus).containsExactlyInAnyOrder(200, 409);
+        assertThat(successfulUpdates.get()).isEqualTo(1);
+        assertThat(rejectedUpdates.get()).isEqualTo(1);
+        for (int i = 0; i < responses.size(); i++) {
+            var response = responses.get(i);
+            var body = new ObjectMapper().readTree(response.getContentAsString());
+            if (response.getStatus() == 409) assertThat(body.path("code").asText()).isEqualTo("CONFLICT");
+            else {
+                assertThat(body.path("stage").asText()).isEqualTo("FOUNDATION");
+                assertThat(jdbc.queryForObject("SELECT changed_by FROM stage_history WHERE house_id=?", String.class, house.id()))
+                        .isEqualTo("stage-racer-" + i);
+            }
+        }
+        assertThat(mapper.findById(house.id()).stage()).isEqualTo(ConstructionStage.FOUNDATION);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM stage_history WHERE house_id=?", Integer.class, house.id())).isEqualTo(1);
+    }
+
+    @Test
+    @Timeout(30)
+    void realAuditCheckFailureRollsBackStageAndTimestamp() throws Exception {
+        House house = service.create(request("mysql-stage-audit-failure", null, null), ADMIN).house();
+        long photo = detailPhoto(house.id(), "2026-06-30T12:00:00Z", "2026-06-30", false);
+        var errorCode = new AtomicInteger();
+        HouseMapper failing = spy(mapper);
+        doAnswer(invocation -> {
+            assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+            House pending = mapper.findById(house.id());
+            assertThat(pending.stage()).isEqualTo(ConstructionStage.FOUNDATION);
+            assertThat(pending.updatedAt()).isEqualTo(house.updatedAt().plusSeconds(1));
+            try {
+                // A real MySQL CHECK failure occurs after the real stage UPDATE in the same transaction.
+                return mapper.insertStageHistory(invocation.getArgument(0), invocation.getArgument(1),
+                        invocation.getArgument(2), "", invocation.getArgument(4));
+            } catch (DataAccessException ex) {
+                var cause = org.springframework.core.NestedExceptionUtils.getMostSpecificCause(ex);
+                if (cause instanceof java.sql.SQLException sql) errorCode.set(sql.getErrorCode());
+                throw ex;
+            }
+        }).when(failing).insertStageHistory(any(), any(), any(), any(), any());
+        var response = advanceRequest(stageMvc(transactionalService(failing,
+                Clock.offset(CLOCK, java.time.Duration.ofSeconds(1)))), house.id(), "stage-admin", "ADMIN", null);
+        assertThat(response.getStatus()).isEqualTo(500);
+        assertThat(new ObjectMapper().readTree(response.getContentAsString()).path("code").asText()).isEqualTo("INTERNAL_SERVER_ERROR");
+        assertThat(errorCode.get()).isEqualTo(3819);
+        assertThat(mapper.findById(house.id())).isEqualTo(house);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM stage_history WHERE house_id=?", Integer.class, house.id())).isZero();
+        assertThat(jdbc.queryForObject("SELECT stage FROM photo WHERE id=?", String.class, photo)).isEqualTo("LAND_CLEARING");
+        assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isFalse();
+    }
+
+    private static HouseService transactionalService(HouseMapper houseMapper) {
+        return transactionalService(houseMapper, CLOCK);
+    }
+
+    private static HouseService transactionalService(HouseMapper houseMapper, Clock clock) {
+        var interceptor = new TransactionInterceptor();
+        interceptor.setTransactionManager(transactionManager);
+        interceptor.setTransactionAttributeSource(new AnnotationTransactionAttributeSource());
+        interceptor.afterPropertiesSet();
+        var factory = new ProxyFactory(new HouseService(houseMapper, photos, new AuthorizationService(), clock));
+        factory.setProxyTargetClass(true);
+        factory.addAdvice(interceptor);
+        return (HouseService) factory.getProxy();
+    }
+
+    private static MockMvc stageMvc(HouseService houseService) {
+        return MockMvcBuilders.standaloneSetup(new HouseController(houseService))
+                .addInterceptors(new AuthenticationInterceptor(new HeaderIdentityParser()))
+                .setControllerAdvice(new GlobalExceptionHandler()).build();
+    }
+
+    private static MockHttpServletResponse advanceRequest(MockMvc mvc, long houseId, String username,
+                                                         String role, String community) throws Exception {
+        var request = post("/api/houses/{id}/advance", houseId).header("X-User", username).header("X-Role", role)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"fromStage\":\"LAND_CLEARING\",\"toStage\":\"FOUNDATION\"}");
+        if (community != null) request.header("X-Community", community);
+        return mvc.perform(request).andReturn().getResponse();
     }
 
     private long detailPhoto(long houseId, String taken, String businessDate, boolean located) {

@@ -99,6 +99,17 @@
         WHERE id = #{id}
     </update>
 
+    <update id="advanceStage">
+        UPDATE house
+        SET stage = #{toStage}, updated_at = GREATEST(updated_at, #{updatedAt})
+        WHERE id = #{id} AND stage = #{fromStage}
+    </update>
+
+    <insert id="insertStageHistory">
+        INSERT INTO stage_history (house_id, from_stage, to_stage, changed_by, changed_at)
+        VALUES (#{houseId}, #{fromStage}, #{toStage}, #{changedBy}, #{changedAt})
+    </insert>
+
     <insert id="insert">
         INSERT INTO house (permit_no, address, community, lat, lng, stage, source_type,
                            source_url, source_fetched_at, created_at, created_business_date,

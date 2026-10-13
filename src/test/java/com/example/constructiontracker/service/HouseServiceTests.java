@@ -7,6 +7,7 @@ import com.example.constructiontracker.domain.PhotoMetadata;
 import com.example.constructiontracker.domain.UserIdentity;
 import com.example.constructiontracker.domain.UserRole;
 import com.example.constructiontracker.dto.CreateHouseRequest;
+import com.example.constructiontracker.dto.AdvanceHouseRequest;
 import com.example.constructiontracker.exception.AuthenticationException;
 import com.example.constructiontracker.exception.BusinessException;
 import com.example.constructiontracker.mapper.HouseMapper;
@@ -40,11 +41,13 @@ class HouseServiceTests {
     private static final CreateHouseRequest REQUEST = new CreateHouseRequest(" permit-1 ", " Test address ",
             " North Austin ", null, null, null, null);
     private HouseMapper mapper;
+    private PhotoMapper photos;
     private HouseService service;
 
     @BeforeEach
     void setUp() {
         mapper = mock(HouseMapper.class);
+        photos = mock(PhotoMapper.class);
         service = serviceAt("2026-01-01T05:59:59.123456789Z");
     }
 
@@ -196,8 +199,63 @@ class HouseServiceTests {
         assertThat(captor.getValue().sourceFetchedAt()).isEqualTo(LocalDateTime.parse("2025-12-31T22:00:00.123456"));
     }
 
+    @ParameterizedTest
+    @CsvSource({"LAND_CLEARING,FOUNDATION", "FOUNDATION,FRAMING", "FRAMING,MEP",
+            "MEP,INTERIOR", "INTERIOR,CO_READY"})
+    void advancesOneStepAndWritesActorAndUtcMicroseconds(ConstructionStage from, ConstructionStage to) {
+        var utc = LocalDateTime.parse("2026-01-01T05:59:59.123456");
+        when(mapper.findById(42L)).thenReturn(houseAtStage(from), houseAtStage(to));
+        when(photos.hasEligiblePhoto(42L, from)).thenReturn(true);
+        when(mapper.advanceStage(42L, from, to, utc)).thenReturn(1);
+        when(mapper.insertStageHistory(42L, from, to, ADMIN.username(), utc)).thenReturn(1);
+        when(mapper.findPhotosByHouseId(42L)).thenReturn(List.of());
+
+        assertThat(service.advance(42L, new AdvanceHouseRequest(from, to), ADMIN).stage()).isEqualTo(to);
+        var calls = inOrder(mapper, photos);
+        calls.verify(mapper).findById(42L);
+        calls.verify(photos).hasEligiblePhoto(42L, from);
+        calls.verify(mapper).advanceStage(42L, from, to, utc);
+        calls.verify(mapper).insertStageHistory(42L, from, to, ADMIN.username(), utc);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"LAND_CLEARING,FRAMING", "FRAMING,FOUNDATION", "FRAMING,FRAMING", "CO_READY,CO_READY"})
+    void rejectsSkippingBackwardSameAndTerminalStagesBeforePhotoQuery(ConstructionStage from, ConstructionStage to) {
+        when(mapper.findById(42L)).thenReturn(houseAtStage(from));
+        assertThatThrownBy(() -> service.advance(42L, new AdvanceHouseRequest(from, to), ADMIN))
+                .isInstanceOfSatisfying(BusinessException.class, error -> {
+                    assertThat(error.getStatus()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+                    assertThat(error.getCode()).isEqualTo("BUSINESS_RULE_VIOLATION");
+                });
+        verifyNoInteractions(photos);
+        verify(mapper, never()).advanceStage(any(), any(), any(), any());
+        verify(mapper, never()).insertStageHistory(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void conditionalUpdateLoserReturns409WithoutWritingAudit() {
+        when(mapper.findById(42L)).thenReturn(houseAtStage(ConstructionStage.LAND_CLEARING));
+        when(photos.hasEligiblePhoto(42L, ConstructionStage.LAND_CLEARING)).thenReturn(true);
+        assertThatThrownBy(() -> service.advance(42L,
+                new AdvanceHouseRequest(ConstructionStage.LAND_CLEARING, ConstructionStage.FOUNDATION), ADMIN))
+                .isInstanceOfSatisfying(BusinessException.class, error -> {
+                    assertThat(error.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                    assertThat(error.getCode()).isEqualTo("CONFLICT");
+                });
+        verify(mapper).advanceStage(42L, ConstructionStage.LAND_CLEARING, ConstructionStage.FOUNDATION,
+                LocalDateTime.parse("2026-01-01T05:59:59.123456"));
+        verify(mapper, never()).insertStageHistory(any(), any(), any(), any(), any());
+    }
+
+    private House houseAtStage(ConstructionStage stage) {
+        House house = savedHouse();
+        return new House(house.id(), house.permitNo(), house.address(), house.community(), house.lat(), house.lng(),
+                stage, house.coverPhotoId(), house.sourceType(), house.sourceUrl(), house.sourceFetchedAt(),
+                house.createdAt(), house.createdBusinessDate(), house.createdBy(), house.updatedAt());
+    }
+
     private HouseService serviceAt(String instant) {
-        return new HouseService(mapper, mock(PhotoMapper.class), new AuthorizationService(),
+        return new HouseService(mapper, photos, new AuthorizationService(),
                 Clock.fixed(Instant.parse(instant), ZoneOffset.UTC));
     }
 
