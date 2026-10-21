@@ -1,0 +1,40 @@
+.card {
+  padding: clamp(1.5rem, 5vw, 3.5rem);
+  border: 1px solid var(--color-border);
+  border-top: 3px solid var(--color-accent);
+  border-radius: var(--radius-large);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-panel);
+}
+
+.eyebrow {
+  margin: 0 0 var(--space-4);
+  color: var(--color-accent);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.title {
+  margin: 0 0 var(--space-4);
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  font-weight: 650;
+  line-height: 1.1;
+  letter-spacing: -0.045em;
+  overflow-wrap: anywhere;
+}
+
+.content {
+  max-width: 36rem;
+  color: var(--color-muted);
+  line-height: 1.75;
+}
+
+.content p {
+  margin-block: 0 var(--space-4);
+}
+
+.content p:last-child {
+  margin-bottom: 0;
+}

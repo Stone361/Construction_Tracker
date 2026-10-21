@@ -1,261 +1,309 @@
 # Construction Tracker（在建房屋地图）
 
-## 1. 项目简介
+## 1. 项目简介与当前状态
 
-面向美国中部在建社区的后端服务，通过房屋位置、施工照片和阶段历史追踪建设进度。支持地图范围查询、照片上传与封面设置、施工阶段推进，以及指定时点的进度汇总。
+Construction Tracker 是面向美国在建住宅管理的地图可视化 Web 应用，通过房屋分布、现场照片和施工阶段跟踪社区建设进度，兼顾管理层的全局监督与社区经理的现场操作。产品目标是形成具有专业视觉表现、地图与列表联动、施工信息查看和现场业务操作能力的完整 MVP。
 
-技术栈：Java 21、Spring Boot 3.5.16、MyBatis Spring Boot Starter 3.0.5、MySQL 8.4.11、Flyway。照片原始文件存本地，业务数据与审计记录存 MySQL。本仓库不包含前端实现。
+本 README 面向技术审核人员与后续开发者，区分已实现能力与待实施计划：
 
-## 2. 快速开始
-
-### 步骤 1：准备环境
-
-- **JDK 21**：确保终端使用该版本。
-- **Docker Desktop / Docker Compose v2**：Compose 需支持 `--wait`。Docker Desktop 必须已启动且未暂停，仅安装不够；Linux 也可使用已运行的 Docker Engine。
-- **Git、curl**：用于克隆仓库和发送验证请求。
-- 无需单独安装 Maven，项目使用 Maven Wrapper；首次下载 Maven、依赖和 MySQL 镜像需要联网。
-
-以下命令适用于 macOS、Linux 或 Windows 的 Git Bash。先检查工具：
-
-```bash
-java -version
-git --version
-curl --version
-docker info
-docker compose version
-```
-
-预期：Java 显示版本 21；其他工具正常显示信息，`docker info` 能连接 Docker 服务。确保本机 **3306、8080** 端口可用。
-
-### 步骤 2：克隆项目
-
-```bash
-git clone https://github.com/Stone361/Construction_Tracker.git
-cd Construction_Tracker
-```
-
-预期：进入包含 `pom.xml`、`mvnw` 和 `docker-compose.yml` 的项目目录。后续命令均在此目录执行。
-
-### 步骤 3：配置环境变量
-
-```bash
-cp .env.example .env
-```
-
-用文本编辑器打开 `.env`，将 `CHANGE_ME_APP_PASSWORD` 和 `CHANGE_ME_ROOT_PASSWORD` 替换为自行设置的两个不同密码。建议使用不带引号的随机十六进制字符串，避免特殊字符在不同配置解析方式下产生歧义。
-
-| 配置项 | 用途 |
+| 范围 | 当前状态 |
 | --- | --- |
-| `DB_URL` | 应用连接地址；默认连接本机 3306 端口的 `construction_tracker` 数据库 |
-| `DB_USERNAME` | 应用数据库账号，默认 `construction_tracker` |
-| `DB_PASSWORD` | 应用数据库密码 |
-| `MYSQL_ROOT_PASSWORD` | MySQL 管理员密码；真实 MySQL 集成测试需要使用 |
+| 后端 | 已实现七个核心 API，以及权限、照片、施工阶段和统计规则；正式测试已有 396 项通过记录，其中真实 MySQL 测试 39 项 |
+| 前端 | React + TypeScript + Vite 基础工程、首页占位、404、路由、样式及测试工具已建立；类型检查、Lint、两项单元测试、构建和本机 Google Chrome 两项 E2E 测试均已通过，Chrome 人工视觉验收已通过 |
+| 后续工作 | 地图与前端业务功能尚未实现，API 联调尚未开展；接下来按第 6 节的 1.1—1.10 逐步实施，每步独立审核 |
 
-预期：两个密码占位符均已替换，其余配置首次运行保持默认即可。应用和 Docker Compose 会读取 `.env`，同名环境变量可覆盖文件中的值。**不要提交 `.env`**，仓库已将其忽略。
+以上测试结果为已有验证事实；后续代码变更仍需按影响范围重新验证。
 
-### 步骤 4：启动 MySQL
+## 2. 后端技术架构
 
-```bash
-docker compose up -d --wait
-docker compose ps
-```
+| 层次 | 技术与职责 |
+| --- | --- |
+| 运行与 API | Java 21、Spring Boot 3、REST API；Controller 与 DTO 定义请求和响应 |
+| 业务与权限 | Service 执行业务校验；MVC 拦截器解析身份，Service 根据数据库中的房屋社区授权 |
+| 数据访问 | MyBatis，SQL 集中在 Mapper XML；MySQL 8 保存房屋、照片元数据和阶段审计 |
+| 数据库迁移与文件 | Flyway 管理数据库迁移；照片原始文件保存在可配置的本地目录 |
 
-预期：启动命令成功结束，`mysql` 服务状态包含 **healthy**。首次启动会在空数据卷中创建数据库和应用账号，端口只映射到 `127.0.0.1:3306`。
+依赖版本见 [pom.xml](./backend/pom.xml)，运行配置见 [application.yml](./backend/src/main/resources/application.yml)，数据库结构见 [Flyway SQL](./backend/src/main/resources/db/migration/)。
 
-### 步骤 5：运行测试
+## 3. 已实现的后端能力
 
-```bash
-./mvnw test
-```
+| 业务领域 | 当前能力 |
+| --- | --- |
+| 房屋与地图 | 创建房屋；按地图矩形范围、施工阶段查询；返回坐标、地址、封面地址及最近照片业务日；按许可证号幂等创建，重复不覆盖原记录 |
+| 房屋详情 | 查看基础资料、来源、当前阶段和按拍摄时间排序的全部照片 |
+| 现场照片 | 单张上传 JPEG、PNG、WebP，按实际内容校验，最大 10,000,000 字节（含上限）；同一房屋按内容去重，保留原始字节；读取 EXIF 时间与 GPS |
+| 封面 | 选择属于该房屋的照片作为封面 |
+| 施工阶段 | 仅允许向前推进一级；当前房屋、当前阶段须有非 SUSPECT 照片（UNKNOWN 可用）；保存操作人与时间 |
+| 统计 | 按当前或指定 UTC 时点返回六阶段数量、长期未更新照片的房屋 ID；按 Chicago 业务日期计算自然日差，超过 14 天才列入，无照片从创建业务日起算 |
 
-完整测试默认包含真实 MySQL 集成测试，必须先完成上一步。预期：测试通过，末尾显示 **BUILD SUCCESS**；当前完整测试共有 396 项。测试在随机命名的独立数据库中执行，不向应用业务库写入测试数据。
+阶段顺序固定：`LAND_CLEARING → FOUNDATION → FRAMING → MEP → INTERIOR → CO_READY`。
 
-### 步骤 6：启动 Spring Boot
+许可证唯一键和房屋内照片内容唯一键保证幂等；阶段条件更新与审计写入在同一事务中完成，竞争失败返回冲突。时间戳使用 UTC，业务日期使用 `America/Chicago`。定位距离 ≤200 米为 VERIFIED，>200 米为 SUSPECT，缺少有效定位或房屋坐标为 UNKNOWN。
 
-```bash
-./mvnw spring-boot:run
-```
+实现入口：[Controller](./backend/src/main/java/com/example/constructiontracker/controller/)、[DTO](./backend/src/main/java/com/example/constructiontracker/dto/)、[Service](./backend/src/main/java/com/example/constructiontracker/service/)、[Mapper XML](./backend/src/main/resources/mapper/)。验证依据保留在 [Java 测试](./backend/src/test/java/com/example/constructiontracker/) 和 [脚本测试](./scripts/tests/) 中，覆盖接口与错误、权限、图片校验与 EXIF/GPS、幂等并发、阶段事务及历史汇总。以上是后端能力，相关前端业务页面仍按第 6 节计划实施。
 
-预期：日志显示应用启动完成，默认监听 **8080**。首次启动会自动执行 Flyway V1 迁移，创建业务表，无需手动建表。
+## 4. 角色与权限
 
-此命令会持续占用当前终端。**保持终端打开**，在下一步使用第二个终端验证服务。
-
-### 步骤 7：验证服务
-
-打开第二个终端，先验证健康检查（无需身份请求头）：
-
-```bash
-curl -i http://127.0.0.1:8080/actuator/health
-```
-
-预期：返回 **HTTP 200**，响应体为 `{"status":"UP"}`。
-
-再验证最简单的业务接口：
-
-```bash
-curl -i http://127.0.0.1:8080/api/houses \
-  -H 'X-User: reviewer' \
-  -H 'X-Role: VIEWER'
-```
-
-预期：返回 **HTTP 200**，表示接口可访问。全新数据库尚未导入业务数据时，返回 `[]` 是正常现象。全新克隆不会自动包含此前导入的 200 条数据，这不影响启动或测试；数据导入是第 6 节的可选操作。
-
-### 步骤 8：停止项目
-
-在运行 Spring Boot 的终端按 **Ctrl+C**，然后在项目目录停止 MySQL：
-
-```bash
-docker compose stop
-```
-
-预期：应用退出，MySQL 容器停止，数据仍保留在命名卷 `mysql-data`。再次使用步骤 4 的启动命令即可恢复数据库。**不要随意执行 `docker compose down -v`，它会删除 Compose 管理的数据卷。**
-
-## 3. 常见问题
-
-### Docker Desktop 已安装，但命令无法连接 Docker
-
-启动或恢复 Docker Desktop，等待引擎就绪，再执行 `docker info` 和步骤 4。暂停状态下也无法正常启动数据库。
-
-### 3306 或 8080 端口被占用
-
-先停止占用端口的服务，再按默认流程启动。仓库的 [Compose 配置](./docker-compose.yml)固定映射本机 3306，修改 `DB_URL` 不会改变 Docker 端口映射。
-
-如果自行将数据库映射到本机 **3308**，需分别配置应用和测试地址。在 `.env` 中将 `DB_URL` 改为：
-
-```dotenv
-DB_URL=jdbc:mysql://localhost:3308/construction_tracker?connectionTimeZone=UTC
-```
-
-测试使用 JVM 系统属性 `mysql.test.address`：
-
-```bash
-./mvnw test -Dmysql.test.address=127.0.0.1:3308
-```
-
-**仅修改 `DB_URL` 不会改变集成测试默认连接的 3306 端口。** 3308 只是非默认端口示例，首次运行无需配置。
-
-### 修改 `.env` 后密码仍不匹配
-
-MySQL 的初始化密码只在空数据卷首次启动时生效，已有数据卷不会自动更新密码。核对创建该数据卷时使用的凭据；需要更换密码时，应在数据库中修改对应账号，再同步 `.env`。不要通过删除需要保留的数据卷解决密码问题。
-
-### MySQL 集成测试无法连接数据库
-
-确认 `docker compose ps` 显示 healthy、`.env` 中 `MYSQL_ROOT_PASSWORD` 与数据库实际 root 密码一致，并在项目根目录运行测试。非默认端口需传入 `mysql.test.address`；已导出的同名密码环境变量也会覆盖 `.env`。应用账号 `DB_PASSWORD` 不能替代 root 密码。
-
-## 4. 自动化测试与验证记录
-
-| 范围 | 用例数 | 覆盖内容 |
-| --- | ---: | --- |
-| 单元、MockMvc、H2 及随机端口 HTTP 测试 | 357 | 身份与权限、接口及错误响应、图片内容/大小、EXIF/GPS、时区与故障补偿 |
-| `MySqlMigrationTests` | 8 | 真实 V1 迁移、唯一键/外键/CHECK、历史汇总与日期边界 |
-| `MySqlHouseCreationTests` | 31 | 真实 SQL、幂等、照片并发、封面与列表联动、阶段竞争/回滚、汇总一致快照 |
-
-[pom.xml](./pom.xml) 默认启用 `mysql.integration=true`。MySQL 不可用或凭据错误时完整测试会失败，不会自动降级到 H2 或静默跳过。两组 MySQL 测试从环境变量或 `.env` 读取 root 密码，各自创建 `construction_tracker_test_<随机值>` 数据库，仅清理本次成功创建的测试库。普通框架测试使用 [H2 测试配置](./src/test/resources/application-test.yml)。
-
-**2026-10-14 手动验证记录**：从 GitHub 全新克隆，使用独立 Docker Compose 项目启动 MySQL 8.4.11，新数据库映射到本机 3308。依次执行：
-
-```bash
-./mvnw clean test -Dmysql.test.address=127.0.0.1:3308
-./mvnw test -Dmysql.test.address=127.0.0.1:3308
-```
-
-两次结果均为：
-
-```text
-Tests run: 396, Failures: 0, Errors: 0, Skipped: 0
-BUILD SUCCESS
-```
-
-随后 Spring Boot 在 **8082** 端口成功启动，Flyway 自动执行 V1。全新业务库创建了 `house`、`photo`、`stage_history` 和 `flyway_schema_history`；迁移记录为 `version=1`、`success=1`。HTTP 验证结果：
-
-- `GET http://127.0.0.1:8082/actuator/health`：HTTP 200，`{"status":"UP"}`。
-- 携带 `X-User: reviewer` 和 `X-Role: VIEWER` 请求 `GET http://127.0.0.1:8082/api/houses`：HTTP 200，`[]`，符合全新业务库无数据的预期。
-
-该全新克隆验证目录的 `git status --short` 仅显示未跟踪的 `compose.manual.yml`，此文件仅用于本地验证，不应提交。
-
-开发时可单独运行 MySQL 测试，或显式跳过它们（跳过不能作为完整验收结果）：
-
-```bash
-./mvnw test -Dtest=MySqlMigrationTests,MySqlHouseCreationTests
-./mvnw test -Dmysql.integration=false
-```
-
-数据脚本另有 34 项 Python 测试（采集 20、导入 14），覆盖首次/重复导入、带照片重跑、字段冲突、清洗和请求策略。使用离线模拟请求，不实际采集或导入；安装 Python 3.9+ 后可运行：
-
-```bash
-python3 -B -W error::ResourceWarning -m unittest discover -s scripts/tests -v
-```
-
-预期：34 项通过，末尾显示 `OK`。Java 测试报告位于 `target/surefire-reports/`。
-
-## 5. API 与身份权限
-
-基础地址：`http://127.0.0.1:8080`。除照片上传和文件下载外，请求与响应使用 JSON。
-
-所有 `/api/**` 请求必须携带非空 `X-User` 和合法 `X-Role`；`SITE_MANAGER` 还必须携带非空 `X-Community`。身份字段去除首尾空白，角色和社区区分大小写。身份缺失或非法返回 401，权限不足返回 403。
-
-| 角色 | 读取权限 | 写入权限 |
+| 角色 | 查看范围 | 允许的写操作 |
 | --- | --- | --- |
-| `ADMIN` | 全部社区 | 创建房屋，上传照片、设置封面、推进所有社区的房屋 |
-| `SITE_MANAGER` | 全部社区 | 仅上传照片、设置封面、推进所属社区房屋；不能创建房屋 |
-| `VIEWER` | 全部社区 | 无 |
+| ADMIN | 所有社区 | 创建房屋；跨社区上传照片、设置封面、推进阶段 |
+| SITE_MANAGER | 所有社区 | 仅对所属社区上传照片、设置封面、推进阶段；不能创建房屋 |
+| VIEWER | 所有社区的房屋、照片、阶段及统计 | 无 |
 
-| 方法与路径 | 请求及行为 | HTTP 状态 |
-| --- | --- | --- |
-| `POST /api/houses` | `permitNo,address,community,lat,lng`；重复许可证返回原记录，不覆盖 | 新建 201，重复 200 |
-| `GET /api/houses` | 可选 `minLat,maxLat,minLng,maxLng,stage`；按 ID 升序，无结果 `[]` | 200 |
-| `GET /api/houses/{id}` | 房屋详情与 `photos`；照片按拍摄时间、ID 升序 | 200，不存在 404 |
-| `POST /api/houses/{id}/photos` | Multipart 字段 `file`；依据实际图片内容识别格式并去重 | 新建 201，重复 200，超限 413，类型无效 415 |
-| `GET /api/houses/{id}/photos/{photoId}/file` | 下载原始文件，检查照片归属，返回实际 Content-Type 和 `nosniff` | 200，不存在 404 |
-| `PUT /api/houses/{id}/cover` | `{"photoId":...}`；重复设置正常返回 | 200，照片不存在或归属错误 422 |
-| `POST /api/houses/{id}/advance` | `{"fromStage":"LAND_CLEARING","toStage":"FOUNDATION"}` | 200，当前阶段冲突 409，非下一阶段或无合格照片 422 |
-| `GET /api/summary` | 可选 `asOf`（UTC ISO-8601，`Z` 或 `+00:00`）；返回 `stageCounts,staleHouseIds` | 200，非法时间 400 |
+**管理层是业务身份，不等于 ADMIN 系统角色**；只需监督进度的管理层人员可使用 VIEWER。桌面和手机适用相同权限。
 
-- 创建字段长度上限：许可证 128、地址 512、社区 128。纬度范围 [-90,90]、经度 [-180,180]，最多 7 位小数；坐标可同时省略或为 null，不能只缺一个。可选 `sourceUrl`（HTTP(S) URL）与 `sourceFetchedAt`（UTC 获取时间）必须同时提供。
-- 列表支持单边界，缺省边界取全球范围；兼容 `bbox=minLng,minLat,maxLng,maxLat`，不能与独立坐标参数混用。范围包含边界，有范围时排除空坐标，无范围时保留；非法或反向范围、非法阶段返回 400。
-- 列表包含 `id,permitNo,address,community,lat,lng,stage,coverPhotoUrl,lastPhotoBusinessDate`；两个照片派生字段无数据时为 null。照片响应含 `id,locationStatus,takenAt,businessDate,url` 等元数据，无照片时详情中的 `photos` 为 `[]`。
-- 封面及照片 URL 也需要身份头；无请求头的 `<img>` 请求会返回 401。
-- 错误统一为 `{"code":"...","message":"..."}`，不返回堆栈。非法参数、JSON 或非正整数 ID 返回 400，目标房屋不存在返回 404，服务器故障返回 500。
+当前按原题通过 `X-User`、`X-Role`、`X-Community` 请求头模拟身份，**不是真实登录或生产级认证**。所有 `/api/**` 请求须提供用户与合法角色，SITE_MANAGER 还须提供社区。首尾空白会去除，角色与社区大小写敏感；缺失或非法身份返回 401，权限不足返回 403。SITE_MANAGER 的社区归属限制写操作，不限制跨社区读取。前端计划提供统一演示身份切换器，并始终标注为模拟身份。具体规则见 [HeaderIdentityParser](./backend/src/main/java/com/example/constructiontracker/auth/HeaderIdentityParser.java) 与 [AuthorizationService](./backend/src/main/java/com/example/constructiontracker/service/AuthorizationService.java)。
 
-## 6. Austin 真实数据（可选）
+## 5. 原始需求与 API 契约约束
 
-数据来源：[Austin 官方 Issued Construction Permits](https://data.austintexas.gov/Building-and-Development/Issued-Construction-Permits/3syk-w9eu/about_data)，数据集 `3syk-w9eu`。使用前核对[使用条款](https://data.austintexas.gov/stories/s/ranj-cccq)。
+### 原始题面：必须遵守的契约
 
-[采集脚本](./scripts/fetch_austin_permits.py)筛选 2025 年以来发证的 `BP`、`Residential`、`R- 101 Single Family Houses`、`New`、`Active` 许可，按发证日降序、许可证号升序分页。每次检查 robots，串行请求间隔至少 2 秒，遵循更长限速；对 429 和临时服务错误有限重试并退避。
+**原始后端题面中的业务规则及“接口约定”是后续开发必须遵守的基准。** 本 README 不替代原题；原始文档须保留，不得删除或覆盖。原题规定的七个 API 为：
 
-许可证号映射为 `permitNo`，地址由街道/城市/州/邮编组成；Council District 1–10 映射为 `Austin Council District N` 社区分组，**不代表真实小区名称**。`Active` 也不代表实际施工阶段，导入时统一从 `LAND_CLEARING` 开始。每条保留官方记录 `sourceUrl` 和实际 UTC 获取时间 `sourceFetchedAt`。
+| 方法 | 路径 |
+| --- | --- |
+| POST | `/api/houses` |
+| GET | `/api/houses` |
+| GET | `/api/houses/{id}` |
+| POST | `/api/houses/{id}/photos` |
+| PUT | `/api/houses/{id}/cover` |
+| POST | `/api/houses/{id}/advance` |
+| GET | `/api/summary` |
 
-清洗时去重，排除无效文本、行政区及缺失/非法/越界坐标，记录排除原因；坐标保留 7 位小数，不填零、不猜测、不额外地理编码。API 本身仍允许成对空坐标。
+其 HTTP 方法、请求参数、响应字段、状态码及业务规则不得因新增前端需求而擅自改变，详细定义仍以原题为准。必须遵守六个固定阶段及顺序推进、照片格式与大小及按内容去重和 EXIF/GPS 校验、America/Chicago 业务日期与 UTC 时间戳、三角色权限、阶段推进的照片资格、并发上传不丢失不重复与同次并发推进仅成功一次，以及超过 14 天无新照片的统计规则。
 
-安装 **Python 3.9+**（仅使用标准库），保持 Spring Boot 运行，在项目根目录的第二个终端执行：
+原题考核范围是后端，题目方计划提供 Leaflet + OpenStreetMap 静态页面壳，并未要求开发者自行实现完整前端，也未将 Leaflet 规定为新增前端不可替换的技术约束。本项目为保持技术背景一致，自主决定新增前端优先采用该组合；这不代表题目方或公司的实际生产技术栈，也不改变后端 API 契约。
 
-```bash
-python3 -B scripts/fetch_austin_permits.py
-python3 -B scripts/import_austin_houses.py --base-url http://127.0.0.1:8080 --report data/local/austin-import-first.json
-python3 -B scripts/import_austin_houses.py --base-url http://127.0.0.1:8080 --report data/local/austin-import-second.json
+### 当前后端：实际对接依据
+
+前端实际调用 API 时，必须核对当前 Controller、DTO、Service、权限实现及相关测试。可以使用经过核实的兼容字段、查询参数和辅助接口，但不得把这些扩展行为写成原题强制要求；发现原题与实现存在实质性冲突时，须记录差异并等待人工确认，不能自行修改任一方来消除差异。
+
+### 新增前端：自主设计范围
+
+前端已确认的技术方案、首批范围及后续 MVP 见第 6 节；页面结构、地图与列表布局、交互反馈、UI 组件和视觉风格在已确认范围内分阶段设计，范围变更仍须人工确认。新增前端需求不能自动成为修改后端 API 的理由。确需新增后端能力时，先记录使用场景、原因、现有能力缺口及 API 影响，经人工确认后再实施；不得把候选能力描述为已实现。
+
+### 当前实现相对题面的补充与待确认点
+
+以下内容属于当前实现的扩展或原题未细化的行为，前端对接时须核对，不应将其写成原题强制要求。
+
+| 项目 | 题面与当前实现的区别 |
+| --- | --- |
+| 地图参数 | 原题使用四个独立边界；实现保留它们，并增加 `bbox=minLng,minLat,maxLng,maxLat`，两种方式不能混用 |
+| 来源与响应字段 | 创建增加可选的 `sourceUrl/sourceFetchedAt` 成对字段；响应增加来源、时间等元数据，详情与列表使用不同 DTO |
+| 图片读取 | 原题要求返回图片 URL，并概括请求响应为 JSON（上传除外）；实现额外提供受身份头保护的原始图片二进制 GET 接口，属于需明确的例外 |
+| 坐标与大小 | 题面未细化创建坐标必填性及 MB 字节定义；实现允许坐标成对为空，10 MB 按 10,000,000 字节执行 |
+| 前端范围 | 原题计划提供 Leaflet + OpenStreetMap 页面壳；本项目自主开发完整前端，优先采用同一地图组合，不改变后端契约 |
+
+## 6. 前端基础与下一阶段开发计划
+
+### 当前基础与产品方向
+
+前端采用 **React + TypeScript（严格模式）+ Vite、React Router、CSS Modules**，已配置 Vitest + React Testing Library、Playwright 和 ESLint。首页占位与 404 路由已完成；`services/` 预留统一 API 客户端，开发代理已配置。地图、统一 API 客户端、演示身份切换器及业务页面仍待实现。
+
+后续地图采用 **Leaflet + React Leaflet、OpenStreetMap 底图**。产品采用 Desktop-first 响应式 Web，首批以本地电脑 Google Chrome 的视觉表现、地图交互和业务完整性为验收重点。参考 Zillow 的地图与房屋卡片双栏浏览方式，采用现代、专业的 Construction SaaS 风格，统一信息层次、卡片、阶段标识和适度动效。界面语言暂定英文，地址和社区保持后端原始内容。
+
+组件保持独立，业务状态与布局解耦，避免固定屏宽依赖，关键操作不能只依赖鼠标悬停。所有业务 JSON 与图片请求使用一致的当前模拟身份，身份头不得发送给外部地图瓦片服务。基础身份头、加载与错误处理、可访问性和后续响应式扩展能力随相关功能首次实现；1.10 用于完善与回归，不能作为推迟这些基础工作的理由。
+
+### 首批开发顺序与逐步验收
+
+以下步骤均为待实施计划。每步实现前先核对现有 API 与数据结构；发现能力缺口先报告并等待人工决定，不自行修改后端或扩大范围。每步验收包括相关自动化测试和 Chrome 人工检查，完成后停止报告，获得人工审核及明确继续授权后才能进入下一步。
+
+#### 1.1 基础页面框架
+
+- **目标与工作**：在已有路由上建立顶部导航及桌面地图／列表双栏工作区，统一间距、字体、色彩、阶段样式基础与区域占位。
+- **边界**：仅实现页面结构与基础导航，不加载地图、请求后端或展示虚构业务数据，不加入大型 UI 组件库或复杂状态管理。
+- **验收**：首页和 404 路由正常；工作区层次清晰，桌面常用宽度无横向溢出；可用键盘访问导航，主要区域有可识别的语义标签。
+- **测试与 Chrome 检查**：组件测试验证布局区域与导航，E2E 覆盖直接访问及未知路由；在 Chrome 检查双栏布局、焦点和基础缩放表现。
+- **审核节点**：提交本步修改及验证结果，停止等待人工审核。
+
+#### 1.2 Leaflet + OpenStreetMap 地图基础浏览
+
+- **目标与工作**：接入 Leaflet 与 React Leaflet，展示底图，支持拖动、缩放和地图容器尺寸变化，保留清晰可见的 OSM 署名。
+- **边界**：不接入房屋数据、地图搜索或地理编码；地图不得依赖身份请求头，外部瓦片请求不携带业务身份。
+- **验收**：底图加载正常；拖动、缩放和布局变化后无灰块或容器错位；瓦片加载失败时有可识别的反馈及恢复方式。
+- **测试与 Chrome 检查**：自动化使用本地模拟瓦片，验证地图区域、署名和失败反馈；Chrome 人工检查实际底图、拖动、缩放与窗口尺寸变化。
+- **审核节点**：报告依赖、地图行为及网络验证结果，停止等待人工审核。
+
+#### 1.3 从真实后端读取房屋地图标记
+
+- **目标与工作**：随首次 API 接入建立统一 fetch 客户端、基础模拟身份配置及请求错误转换；根据初始地图范围调用现有 `GET /api/houses`，展示有坐标的真实房屋标记及施工阶段区分。
+- **边界**：使用原题四个独立边界参数，不与 `bbox` 混用；不新增 API、前端登录或房屋写操作。此步完成初始范围读取，持续移动查询在 1.7 实施。
+- **验收**：业务请求携带有效的 `X-User`、`X-Role` 及适用的 `X-Community`；标记 ID、坐标和阶段对应后端响应，无坐标记录不填零或猜测位置；具备加载、空数据、失败重试及 401／403 反馈。
+- **测试与 Chrome 检查**：客户端与组件测试覆盖身份头、边界参数、坐标缺失及错误响应；E2E 使用受控 API 响应。Chrome 对接本地真实后端核对标记及网络请求，不写业务数据。
+- **审核节点**：报告接口字段、身份与真实联调结果，停止等待人工审核。
+
+#### 1.4 房屋卡片列表与无坐标房屋入口
+
+- **目标与工作**：将当前地图范围结果展示为右侧卡片，包含地址、社区、许可证、阶段及最近照片业务日；为无坐标房屋提供独立、可发现的入口。
+- **边界**：使用现有不带边界的列表查询识别无坐标记录，与地图范围结果分开呈现，不添加后端专用接口或虚构坐标；此步不实现搜索、分页、封面图片加载或详情页。
+- **验收**：卡片数据与当前范围结果一致；无坐标记录明确标识、不重复出现在有坐标分组；空列表及缺失字段有合理展示。`lastPhotoBusinessDate` 按业务日期展示，不当作最新上传时刻或房屋更新时间。
+- **测试与 Chrome 检查**：组件测试覆盖字段、空值、无坐标分组及空数据；E2E 检查列表入口和读取状态；Chrome 核对真实数据、长地址及列表滚动。
+- **审核节点**：报告无坐标请求策略及数据对应关系，停止等待人工审核。
+
+#### 1.5 携带身份读取受保护的封面图片
+
+- **目标与工作**：依据 `coverPhotoUrl`，复用当前模拟身份读取图片二进制，管理 Blob URL 和图片加载状态。
+- **边界**：不实现上传、设置封面、缩略图服务或图片管理。不能依赖无身份头的普通图片 URL 请求。
+- **验收**：JSON 与图片请求使用同一身份；无封面、加载中、失败、401／403／404 均有合理反馈；图片切换、组件卸载及身份变化时取消过期请求并释放 Blob URL，不继续显示旧身份的图片。
+- **测试与 Chrome 检查**：测试请求头、Blob URL 创建与释放、失败状态及旧响应保护；E2E 使用受保护图片响应；Chrome 核对真实封面、占位与身份错误反馈。
+- **审核节点**：报告鉴权、请求取消和资源释放结果，停止等待人工审核。
+
+#### 1.6 地图与列表选择、定位和高亮联动
+
+- **目标与工作**：以房屋 ID 统一选择状态，点击标记高亮对应卡片，点击卡片定位并高亮地图标记，必要时滚动列表使选中项可见。
+- **边界**：不加入搜索或编辑；无坐标房屋可在列表选中，但不触发猜测定位；此步不实现地图快速预览内容。
+- **验收**：地图与卡片始终只有一致的当前选择；程序定位保持缩放级别并按需最小平移；重复选择不导致跳动、无限滚动或联动循环。
+- **测试与 Chrome 检查**：组件测试覆盖选择、取消和无坐标行为；E2E 验证双向联动及重复选择；Chrome 检查定位幅度、列表滚动与键盘操作。
+- **审核节点**：报告选择状态与程序定位行为，停止等待人工审核。
+
+#### 1.7 地图范围查询、施工阶段筛选及请求竞态处理
+
+- **目标与工作**：在地图停止移动后按四边界刷新结果，增加全部／六阶段筛选，将地图与列表统一到同一查询结果；明确无坐标分组不参与地理范围过滤，但遵守阶段条件。
+- **边界**：仅使用现有边界和单阶段参数，不增加关键词、分页或多阶段后端接口；保留 1.6 的选择与定位约定。
+- **验收**：拖动、缩放和阶段变化后结果对应最新条件；取消过期请求并防止旧响应覆盖；同一有效条件无重复请求，程序定位不触发查询循环；保留仍有效的选择，失效选择按一致规则清除，加载及失败状态可辨认。
+- **测试与 Chrome 检查**：使用延迟及乱序响应测试最新结果保护，覆盖快速筛选、请求取消、无坐标阶段条件及程序定位去重；Chrome 连续拖动、缩放、切换阶段，核对网络请求和结果。
+- **审核节点**：报告查询触发规则、选择清理规则和竞态测试结果，停止等待人工审核。
+
+#### 1.8 地图内快速预览
+
+- **目标与工作**：为选中房屋提供地图内摘要，展示现有列表字段及适用的封面状态，提供详情导航入口。
+- **边界**：复用列表数据与已建立的图片读取能力，不提前实现完整详情、上传或阶段操作；详情页面本身在 1.9 实施，本步仅验证入口目标。
+- **验收**：摘要始终对应当前房屋，可关闭且不干扰地图与列表选择；缺失封面及长地址可正常展示；详情入口携带正确房屋 ID，重复选择不会出现多个冲突预览。
+- **测试与 Chrome 检查**：组件测试覆盖摘要、关闭及导航目标；E2E 验证切换房屋和预览一致性；Chrome 检查地图边缘位置、遮挡及键盘访问。
+- **审核节点**：报告摘要字段和交互边界，停止等待人工审核。
+
+#### 1.9 独立只读房屋详情及已有照片展示
+
+- **目标与工作**：建立独立详情路由，调用现有 `GET /api/houses/{id}`，展示基础资料、来源、当前阶段及已有照片，复用受保护图片读取逻辑。
+- **边界**：只读展示，不添加编辑、删除、上传或阶段推进操作，也不展示尚无 API 的阶段审计历史；保持后端照片排序及业务日期语义。
+- **验收**：可从预览进入，也可直接访问和刷新详情 URL；加载、无照片、无坐标、不存在及 401／403／404 状态清晰；返回地图时恢复范围、阶段与适用的选择状态，照片资源正确释放。
+- **测试与 Chrome 检查**：组件及路由测试覆盖直接访问、失败、返回状态和照片鉴权；E2E 验证地图到详情再返回及刷新；Chrome 核对真实资料、照片顺序、浏览器前进后退和滚动。
+- **审核节点**：报告路由、返回状态和真实只读联调结果，停止等待人工审核。
+
+#### 1.10 演示身份切换完善、异常处理及首批整体回归
+
+- **目标与工作**：基于已具备的基础身份配置，完善 ADMIN、SITE_MANAGER、VIEWER 的统一演示切换入口，明确标注模拟身份，统一首批页面的加载、空态、请求失败与重试表现。
+- **边界**：不实现真实认证、不增加业务写操作；不能把前述步骤已要求的请求头、鉴权或错误处理推迟到本步。SITE_MANAGER 的社区写权限限制不能错误地变成跨社区读取限制。
+- **验收**：身份切换后 JSON、图片和详情读取一致，过期数据及图片不残留；三角色读取、非法／缺失身份、401／403／404、地图或图片失败及恢复均有明确反馈；首批地图、列表、筛选、预览和详情完整连通。
+- **测试与 Chrome 检查**：补齐身份切换与跨页面异常用例，在本机 Chrome 执行首批 E2E 回归；人工走查键盘焦点、错误恢复、窗口尺寸变化及完整只读浏览流程。
+- **审核节点**：提供首批功能回归结果与仍存限制，停止等待人工审核；不自动进入后续写操作或移动端开发。
+
+### 后续范围
+
+搜索、现场照片上传、设置封面、推进施工阶段、创建房屋、统计与关注提醒，以及完整移动端适配属于后续计划，须另行细分并获准实施。搜索需先明确“全部房屋”与“当前地图范围”的语义及现有 API 能力缺口；统计提醒不等于工期逾期判断或自动消息推送。移动端仍使用同一套 Web 应用，完整手机流程和真机 Safari 验收另行安排。
+
+### 地图服务边界
+
+[Leaflet](https://leafletjs.com/) 是 JavaScript 地图库，[OpenStreetMap](https://www.openstreetmap.org/)（OSM）是开放地图数据项目；React Leaflet 用于 React 与 Leaflet 的集成。采用 OSM 不代表城市或 ZIP Code 搜索已实现，地理编码服务及其数据来源仍待需求分析。
+
+OSM 官方公共瓦片服务有[使用政策与资源限制](https://operations.osmfoundation.org/policies/tiles/)，不能视为无限免费商用地图服务；地图须保留符合要求、清晰可见的 [OpenStreetMap 署名](https://www.openstreetmap.org/copyright)。正式部署前按流量和服务要求评估瓦片服务提供商；自动化地图测试使用本地模拟瓦片。
+
+## 7. 开发流程与验收要求
+
+### 开发阶段、人工审核与 Git 提交
+
+后续按小功能增量实施，每个阶段须有清晰边界和可验证的验收标准。工作顺序为：**独立功能增量 → 自动化测试与必要的浏览器验证 → 停止并报告 → 人工审核通过且同意继续 → 下一功能增量**。Git 提交由人工另行决定，不作为每个开发阶段必须执行的步骤。
+
+| 节点 | 规则 |
+| --- | --- |
+| 开发阶段 | 按小功能增量细分；每阶段完成后停止，提供修改清单、测试结果（含未运行项及原因）、必要的浏览器验证结果和待审核问题 |
+| 人工审核节点 | 原则上每个开发阶段均须审核通过才能进入下一阶段；未经人工审核和确认，不自动继续 |
+| Git 提交节点 | 由人工根据功能完整性、稳定性和风险决定；可合并多个已审核通过的阶段，也可对高风险或独立完整改动单独提交；阶段与提交不一一对应 |
+
+- **阶段审核通过不等于授权 Git 提交。** 未经明确授权，不执行 `git commit` 或 `git push`；commit 授权也不自动包含 push 授权。
+- 获得提交授权后，提交前检查 `git status` 和暂存内容，核对提交范围，不混入其他阶段或原有未提交修改。每个提交尽量保持工程可构建、现有正式测试通过。
+- 保持小步、有意义的版本提交，保留原题至少 8 次有意义提交的交付要求，不机械追求数量，也不为凑次数拆分无价值提交。
+- UI 质量贯穿每个页面功能阶段，同时检查信息层次、布局、状态反馈、基础响应式和可访问性；后续整体体验阶段用于进一步完善，不将全部界面质量工作留到 MVP 完成后。交互设计使用尼尔森十大可用性原则，并补充无障碍及响应式要求；可使用低保真线框图，不强制 Figma 或完整高保真稿。
+
+### 正式测试与变更边界
+
+- 保留全部正式 Java 单元测试、HTTP 测试、真实 MySQL 集成测试、测试资源及 Austin 脚本测试；不得删除测试、降低断言、跳过正式测试或以 Mock 替代既有真实集成测试。
+- 真实 MySQL 测试只允许在本次自建的独立测试库写入及清理，不以业务库作为测试库；不可用时应明确失败，不能以跳过视作完整通过。
+- 前端自动化尽量使用受控 API、图片和本地模拟瓦片，确保可重复；真实后端联调及人工 Chrome 验收须明确记录范围。后端能力扩展与脚本删除均须先获人工确认。
+- 不以验收为由重导入业务数据、重建数据卷、覆盖本地配置或清理已有照片；接口方法、字段、状态码、权限与业务规则不得擅自调整。
+
+### 长期交付要求
+
+保留至少 8 次有意义的小步 Git 提交、不改写已推送历史、可运行的正式自动化测试、必要设计说明，以及能够解释实现方案与技术取舍的要求。AI 使用记录按交付要求保存在 `docs/ai-log/`，说明中至少保留两例错误建议及人工纠正；记录的整理另行安排，不以文档整理自动授权新增、删除或提交其他文件。
+
+## 8. 本地运行与测试
+
+### 后端
+
+后端命令从仓库根目录执行；Windows 使用 `mvnw.cmd` 并传入相同参数。前提为 JDK 21、已运行的 Docker 引擎和支持 `--wait` 的 Docker Compose v2，默认端口 3306、8080 可用。使用仓库 Maven Wrapper，首次运行需要联网获取依赖。
+
+1. 首次配置且 `.env` 尚不存在时，在根目录执行 `cp .env.example .env`，将两个密码占位符改为不同的实际密码；已有 `.env` 不要覆盖或提交。配置模板见 [.env.example](./.env.example)。
+2. 执行 `docker compose up -d --wait` 启动 MySQL；配置见 [docker-compose.yml](./docker-compose.yml)。
+3. 执行 `./mvnw spring-boot:run` 启动后端，默认地址为 `http://127.0.0.1:8080`。Flyway 自动应用数据库迁移并校验历史，无需手动建表；当前配置禁用 `clean`，不得通过覆盖已有 SQL 或修改历史绕过校验。
+4. 健康检查为 `GET /actuator/health`，无需身份头；业务请求按第 4 节携带身份头。
+
+| 命令（仓库根目录） | 用途 |
+| --- | --- |
+| `./mvnw test` | 运行全部正式后端测试，默认包含真实 MySQL 集成测试 |
+| `./mvnw verify` | 执行 Maven 验证生命周期，包含正式测试与打包检查 |
+
+真实 MySQL 测试需有效的 `MYSQL_ROOT_PASSWORD`（环境变量或根目录 `.env`），使用随机命名的独立数据库，并仅清理本次创建的测试库。测试地址默认 `127.0.0.1:3306`，通过 `mysql.test.address` 指定；修改应用 `DB_URL` 不会同步修改测试地址。测试报告位于 `backend/target/surefire-reports/`，构建 JAR 位于 `backend/target/construction-tracker-0.0.1-SNAPSHOT.jar`。
+
+Spring Boot `run` 和 Surefire 测试进程以仓库根目录为工作目录，读取根目录 `.env`；照片默认存入 `./data/local/photos`，可通过 `PHOTO_STORAGE_DIRECTORY` 指定可写目录。若直接运行构建 JAR，也应从仓库根目录启动以保持相同路径语义。
+
+停止应用使用 `Ctrl+C`，停止数据库使用 `docker compose stop`；不要通过删除数据卷处理启动问题。数据库初始化密码只在空数据卷首次启动时生效。Flyway SQL、业务数据、照片及数据库卷均须保留，不通过重建或重导入数据代替排查。
+
+### 前端
+
+已验证的本地环境为 Node.js **26.12.0**、npm **11.20.0**。依赖采用正式版本并精确固定，`package-lock.json` 保留完整解析结果；支持的 Node/npm 范围见 [package.json](./frontend/package.json) 的 `engines`。主要依赖为 React 19.3.1、React Router 8.5.0、TypeScript 6.0.3、Vite 8.3.4、Vitest 5.0.5、Playwright 1.64.1、ESLint 10.13.0；TypeScript 与 `typescript-eslint` 支持范围匹配。
+
+首次安装或按锁文件恢复依赖时，从仓库根目录执行：
+
+```sh
+cd frontend
+npm ci
 ```
 
-预期：采集得到至少 200 条有效唯一记录，完整数据和统计报告写入 `data/local/`，同时更新[仓库中的 20 条样本](./data/samples/austin-houses.json)。对空业务库，首次导入应显示新建记录；同一文件再次导入应显示已存在、无失败，报告中 `passed` 为 true。**必须指定 `--base-url`**：脚本默认端口是 8081，应用默认端口是 8080。
+日常启动可从仓库根目录执行：
 
-已有 `data/local/austin-houses.json` 时无需重新采集。重复导入应使用同一文件；重新采集会刷新获取时间，可能与已入库来源信息冲突。
+```sh
+./start.command
+```
 
-[导入脚本](./scripts/import_austin_houses.py)先校验全部输入，仅通过 ADMIN 身份的 GET/POST `/api/houses` 导入及核对，不直接连接数据库、不自动重试 POST；核对七个导入字段、ID 和业务状态，失败返回非零退出码。
+也可在 macOS Finder 中双击根目录的 [start.command](./start.command)。脚本定位自身所在项目，检查 Node.js、npm 和已安装依赖，以严格端口模式启动 **http://localhost:5173/**，确认首页就绪后调用本机 Google Chrome；Chrome 无法打开时打印地址供手动访问。依赖缺失时需手动安装，脚本不会自动执行安装或切换端口。
 
-此前已实际导入并验证 200 条数据：首次 200 新建、0 已存在、0 失败；同一输入再次导入为 0 新建、200 已存在、0 失败，ID 和原记录保持不变。这是既有验证记录，不表示新环境已导入数据。仓库仅附样本，完整数据不随克隆提供；公开数据会变化，未来采集结果可能不同。
+保持启动终端打开，按 `Ctrl+C` 停止服务器。本地服务器未启动或已经停止时，localhost 地址无法访问。首页占位与 404 页面不依赖后端或数据库；后续业务联调才需要启动后端。
 
-## 7. 核心设计要点
+| 命令（`frontend/`） | 用途 |
+| --- | --- |
+| `npm run dev` | 直接启动 Vite，默认 `http://127.0.0.1:5173`，端口被占用时失败 |
+| `npm run build` | 严格类型检查后生产构建，输出 `frontend/dist/` |
+| `npm run preview` | 在 `http://127.0.0.1:4173` 预览已构建产物 |
+| `npm run typecheck` | 独立检查应用、工具配置和 E2E 测试类型 |
+| `npm run lint` | ESLint 检查源码、测试与配置，警告也视为失败 |
+| `npm test` | 单次运行 Vitest + React Testing Library |
+| `npm run test:watch` | 单元测试监听模式 |
+| `npm run test:e2e` | 使用本机 Google Chrome 执行 Playwright E2E |
+| `npm run test:e2e -- --list` | 仅检查配置并列出 E2E 测试，不启动浏览器 |
 
-- **数据与权限**：`house` 保存房屋、阶段及来源，`photo` 保存文件和 EXIF 元数据，`stage_history` 保存阶段变更、操作人与 UTC 时间。SQL 集中在 [MyBatis XML](./src/main/resources/mapper/)；唯一键、外键和 CHECK 约束兜底，封面外键保证照片归属。身份由 MVC 拦截器解析，Service 根据数据库中的社区统一授权。
-- **幂等与并发**：许可证全局唯一；照片按 `(house_id, SHA-256)` 去重。唯一键冲突后返回原记录，不覆盖元数据，其他数据库错误不会伪装成重复。不同照片使用 UUID 文件名并禁止覆盖。
-- **阶段推进**：`LAND_CLEARING → FOUNDATION → FRAMING → MEP → INTERIOR → CO_READY`，每次仅前进一步。需要当前房屋、当前阶段的非 SUSPECT 照片（UNKNOWN 可用）；条件 UPDATE 检查 `fromStage`，阶段和审计记录在同一事务中提交或回滚。
-- **图片与时间**：实际解码 JPEG/PNG/WebP，不信任扩展名或声明的 Content-Type，单文件上限为 10,000,000 字节。保留原始字节；有效 EXIF 时间优先，有偏移转 UTC，无偏移按 `America/Chicago`；DST 缺口回退上传时间，重叠选第一次，非法/缺失时间也回退上传时间。UTC 时间存 `DATETIME(6)`，业务日期单独保存。
-- **定位与汇总**：GPS 按保存的 7 位精度计算 Haversine 距离，≤200 米为 VERIFIED，>200 米为 SUSPECT，缺少有效 GPS 或房屋坐标为 UNKNOWN。列表一次 SQL 聚合，详情固定两次查询；历史汇总使用只读 REPEATABLE_READ 一致快照，按创建/上传时间和阶段历史还原状态，排除未来照片业务日，日差 >14 才视为陈旧，无照片从创建业务日起算，六阶段计数补零。
-- **迁移与文件一致性**：Flyway 自动迁移和校验，禁用 clean/自动 baseline。照片先保存文件再入库；明确失败时补偿清理本次文件，已识别的提交结果不明或插入后读取失败时保留文件，避免误删。默认照片目录为 `./data/local/photos`，可通过 `PHOTO_STORAGE_DIRECTORY` 指定可写目录；完整配置见 [application.yml](./src/main/resources/application.yml)。
+[Playwright 配置](./frontend/playwright.config.ts) 使用 `browserName: 'chromium'`、`channel: 'chrome'`，需要本机已安装且可访问的 Google Chrome，不要求下载 Playwright 自带 Chromium。E2E 自动启动独立 Vite 服务，地址为 `http://127.0.0.1:4173`；该端口也用于 `preview`，运行前应停止占用它的预览服务。当前 E2E 覆盖首页访问与 404 返回，不依赖后端、MySQL、照片或外部地图。人工视觉检查同样使用 Google Chrome。
 
-## 8. 已知限制
+API 开发代理集中在 [vite.config.ts](./frontend/vite.config.ts)：`/api` 请求保留原路径转发至 `http://localhost:8080`，不修改后端端口，不硬编码生产 API 地址。代理只作用于开发服务器；生产 API 转发需另行配置。React Router 使用浏览器历史路由，静态部署应将非资源页面请求回退到 `index.html`。
 
-- 身份通过请求头模拟，未实现真实登录、Spring Security、JWT 或 Session，不适合作为生产认证方案。
-- 本地文件与 MySQL 无跨资源原子提交；崩溃、提交不明或补偿失败可能留下孤立/残缺文件，尚无自动恢复清理。提交不明场景使用异常注入验证，未实际切断网络或穷举驱动异常。
-- EXIF 可被修改，VERIFIED 仅表示文件提供的 GPS 满足距离规则，不能证明真实拍摄地点。历史照片不自动补解析，重复上传不覆盖原元数据；1 MiB EXIF 解析预算不等于总内存上限。
-- 上传记录使用请求读取到的房屋阶段；与阶段推进交错时，照片可能保留推进前阶段。
-- `.env`、`data/local/` 和构建产物不随仓库交付；真实密码、原始照片和本地日志不应提交。验证记录仅对应记录中的运行，后续代码修改需重新测试。
+## 9. Austin 数据与保留资源
+
+数据来自 Austin 官方 Issued Construction Permits，数据集 `3syk-w9eu`；曾导入约 200 条真实建筑许可。新克隆不自动包含既有业务数据，当前数据库数量需另行核实。
+
+- 保留 [采集脚本](./scripts/fetch_austin_permits.py)、[导入脚本](./scripts/import_austin_houses.py)、[样本](./data/samples/austin-houses.json) 及其测试。Python 3.9+，使用标准库。
+- 采集遵守来源网站条款、robots 与限速；排除缺失、非法或越界坐标，不填零、不猜测、不额外地理编码，保留来源 URL 和实际获取时间。采集会写入本地数据并更新仓库样本。
+- 导入只通过 ADMIN 身份调用房屋 API，按许可证号幂等。使用应用默认端口时显式指定 `--base-url http://127.0.0.1:8080`，导入脚本自身默认端口为 8081。
+- `Austin Council District N` 是导入分组，不代表真实住宅小区；许可 Active 状态也不代表施工阶段，导入初始阶段统一为 LAND_CLEARING。
+- 完整数据、照片和本地报告位于被忽略的 `data/local/`；原始大文件、密码和本地日志不纳入仓库。
+
+## 10. 已知限制与待决策事项
+
+| 事项 | 当前事实与后续边界 |
+| --- | --- |
+| 身份与部署 | 请求头模拟尚无真实登录、JWT 或 Session。应用未配置 CORS；前端开发代理已配置，尚未进行 API 联调，正式部署与认证另行评估 |
+| 列表与搜索 | 房屋列表仅支持范围和单阶段过滤，按 ID 升序；无服务端关键词搜索、分页或社区筛选。地址、许可证号、社区搜索属于后续 MVP，数据范围语义和实现方案待确认 |
+| 照片交互 | 照片元数据随详情全量返回；仅有原图，无缩略图或批量上传 API。图片 URL 也需身份头，普通无身份头的 `<img>` 请求返回 401；前端计划携带身份头读取图片并管理 Blob URL，尚未实现 |
+| 资料与历史 | 无房屋基本信息编辑、房屋／照片删除、清空封面 API；阶段审计已保存但未开放查询，不应把阶段历史展示列为已支持 |
+| 统计口径 | 统计是全局单时点快照，无社区分组或趋势序列；长期未更新仅返回 ID，包含 SUSPECT 照片日期且未排除 CO_READY；列表／详情不提供历史快照 |
+| 最近现场更新 | 列表 `lastPhotoBusinessDate` 是照片业务日最大值，不是最新上传时刻；上传不更新房屋 `updatedAt`，补传旧照片不一定改变最近照片业务日 |
+| 文件与定位 | 本地文件与数据库无跨资源原子提交，异常可能遗留孤立文件，暂无自动恢复；EXIF 可被修改，VERIFIED 仅表示距离规则成立 |
+| 并发与待实施事项 | 上传与推进交错时，照片可能关联推进前阶段；前端基础工程及 Chrome 验收已通过，地图与业务功能待实施，瓦片服务提供商、地理编码方案、搜索范围细则及完整移动端交互后续确认 |

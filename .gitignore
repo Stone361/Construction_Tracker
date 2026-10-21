@@ -1,6 +1,7 @@
 HELP.md
+# Maven output (root historical output and backend builds)
 target/
-.mvn/wrapper/maven-wrapper.jar
+/backend/.mvn/wrapper/maven-wrapper.jar
 !**/src/main/**/target/
 !**/src/test/**/target/
 
@@ -43,3 +44,17 @@ build/
 # Full public-data collection and local collection reports
 /data/local/
 __pycache__/
+
+# Local source brief
+/上机题_在建房屋地图_题面.md
+
+# Frontend dependencies and generated output
+/frontend/node_modules/
+/frontend/dist/
+/frontend/coverage/
+/frontend/.vitest/
+/frontend/test-results/
+/frontend/playwright-report/
+/frontend/playwright/.cache/
+/frontend/*.tsbuildinfo
+/frontend/*.log
