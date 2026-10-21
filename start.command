@@ -1,5 +1,5 @@
 #!/bin/bash
-# Keep Vite in the foreground; only browser readiness runs in a helper.
+# Start a manual preview on its own port and stop it after the page disconnects.
 set -uo pipefail
 
 fail() {
@@ -21,46 +21,71 @@ npm --version >/dev/null 2>&1 || fail "npm 无法运行，请检查本机安装�
 if [[ ! -d node_modules || ! -x node_modules/.bin/vite ]]; then
   fail "前端依赖尚未就绪。请先在 frontend/ 中手动运行 npm ci，再重新启动；本脚本不会安装依赖。"
 fi
+command -v lsof >/dev/null 2>&1 || fail "未找到 lsof，无法选择空闲端口和监测页面连接。"
 
-url='http://localhost:5173/'
-startup_log="$(mktemp "${TMPDIR:-/tmp}/construction-tracker-frontend.XXXXXX")" || fail "无法创建临时启动日志。"
-opener_pid=''
+port=''
+for ((candidate = 5180; candidate <= 5199; candidate++)); do
+  if ! lsof -nP -iTCP:"$candidate" -sTCP:LISTEN >/dev/null 2>&1; then
+    port="$candidate"
+    break
+  fi
+done
+[[ -n "$port" ]] || fail "5180–5199 端口均被占用，请关闭不需要的本地服务后重试。"
+url="http://localhost:$port/"
+startup_log="$(mktemp "${TMPDIR:-/tmp}/construction-tracker-vite.XXXXXX")" || fail "无法创建临时启动日志。"
+server_pid=''
 cleanup() {
-  if [[ -n "$opener_pid" ]]; then
-    kill "$opener_pid" 2>/dev/null || true
-    wait "$opener_pid" 2>/dev/null || true
+  trap - EXIT INT TERM
+  if [[ -n "$server_pid" ]] && kill -0 "$server_pid" 2>/dev/null; then
+    kill "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
   fi
   rm -f -- "$startup_log"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
+trap 'exit 143' TERM
 
-open_when_ready() {
-  local attempt
-  for ((attempt = 0; attempt < 120; attempt++)); do
-    # Vite prints its URL only after successfully listening. Checking this
-    # avoids opening a different service when the strict port is occupied.
-    if grep -Fq "$url" "$startup_log" &&
-      curl --noproxy '*' --silent --fail --max-time 1 "$url" >/dev/null 2>&1; then
-      printf '\n前端已就绪：%s\n' "$url"
-      if ! /usr/bin/open -a "Google Chrome" "$url" 2>/dev/null; then
-        printf '无法自动打开 Google Chrome，请手动访问：%s\n' "$url"
-      fi
-      return
-    fi
-    sleep 0.25
-  done
-  printf '\n尚未确认首页就绪，未打开浏览器。请检查 Vite 输出；就绪后可访问：%s\n' "$url" >&2
-}
-
-printf '正在启动前端；5173 端口被占用时会报错。按 Ctrl+C 停止。\n'
-open_when_ready &
-opener_pid=$!
-npm run dev -- --host localhost --port 5173 --strictPort --clearScreen false 2>&1 | tee "$startup_log"
-status=$?
-if [[ "$status" -eq 130 ]]; then
-  printf '\n前端服务器已停止。\n'
-elif [[ "$status" -ne 0 ]]; then
-  printf '\n前端启动或运行失败（退出码 %s）。请检查上方错误；不会自动安装依赖或切换端口。\n' "$status" >&2
+printf '正在启动前端，使用端口 %s；按 Ctrl+C 也可停止。\n' "$port"
+./node_modules/.bin/vite --host localhost --port "$port" --strictPort --clearScreen false >"$startup_log" 2>&1 &
+server_pid=$!
+ready=0
+for ((attempt = 0; attempt < 120; attempt++)); do
+  if ! kill -0 "$server_pid" 2>/dev/null; then
+    cat "$startup_log" >&2
+    fail "Vite 启动失败，请检查上方错误。"
+  fi
+  # Match this Vite process's startup output before probing the address.
+  if grep -Fq "$url" "$startup_log" &&
+    curl --noproxy '*' --silent --fail --max-time 1 "$url" >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
+  sleep 0.25
+done
+[[ "$ready" -eq 1 ]] || { cat "$startup_log" >&2; fail "前端未能在 30 秒内就绪。"; }
+printf '前端已就绪：%s\n' "$url"
+if ! /usr/bin/open -a "Google Chrome" "$url" 2>/dev/null; then
+  printf '无法自动打开 Google Chrome，请手动访问：%s\n' "$url"
 fi
-exit "$status"
+printf '关闭所有使用本次地址的页面后，服务器将自动停止；按 Ctrl+C 可立即停止。\n'
+
+# Vite holds a development WebSocket while a page is open. Give reloads and
+# brief reconnects time to recover before considering the page closed.
+seen_page=0
+idle_seconds=0
+while kill -0 "$server_pid" 2>/dev/null; do
+  if lsof -nP -a -p "$server_pid" -iTCP:"$port" -sTCP:ESTABLISHED >/dev/null 2>&1; then
+    seen_page=1
+    idle_seconds=0
+  elif [[ "$seen_page" -eq 1 ]]; then
+    ((idle_seconds += 1))
+    if [[ "$idle_seconds" -ge 5 ]]; then
+      printf '页面已关闭，正在停止本次前端服务：%s\n' "$url"
+      exit 0
+    fi
+  fi
+  sleep 1
+done
+cat "$startup_log" >&2
+fail "Vite 意外退出，请检查上方错误。"

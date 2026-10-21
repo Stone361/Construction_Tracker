@@ -1,66 +1,18 @@
-.shell {
-  min-height: 100svh;
-}
-
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  min-height: 5rem;
-  padding: var(--space-4) clamp(1.25rem, 5vw, 5rem);
-  border-bottom: 1px solid var(--color-border);
-  background: var(--color-surface);
-}
-
-.brand {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-3);
-  color: var(--color-text);
-  font-weight: 650;
-  text-decoration: none;
-}
-
-.mark {
-  display: grid;
-  place-items: center;
-  width: 2.5rem;
-  height: 2.5rem;
-  border-radius: var(--radius-small);
-  color: white;
-  background: var(--color-accent);
-  font-size: 0.8rem;
-  letter-spacing: 0.06em;
-}
-
-.label {
-  color: var(--color-muted);
-  font-size: 0.8rem;
-}
-
-.main {
-  width: min(100%, 54rem);
-  margin-inline: auto;
-  padding: clamp(3rem, 10vh, 7rem) var(--space-5);
-}
-
-.skipLink {
-  position: absolute;
-  top: var(--space-3);
-  left: var(--space-3);
-  z-index: 1;
-  padding: var(--space-3);
-  transform: translateY(-200%);
-  background: var(--color-surface);
-}
-
-.skipLink:focus {
-  transform: translateY(0);
-}
-
-@media (max-width: 30rem) {
-  .label {
-    display: none;
-  }
-}
+.shell { min-height: 100svh; display: flex; flex-direction: column; }
+.header { height: var(--header-height); flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; gap: 2rem; padding-inline: clamp(1.25rem, 3vw, 3rem); background: var(--color-surface); border-bottom: 1px solid var(--color-border); position: relative; z-index: 1000; }
+.brand { display: inline-flex; align-items: center; gap: .75rem; color: var(--color-text); text-decoration: none; font-size: 1rem; font-weight: 700; letter-spacing: -.035em; white-space: nowrap; }
+.brandLight { font-weight: 450; }
+.mark { width: 2.4rem; height: 2.4rem; border-radius: .65rem; display: grid; place-items: center; position: relative; background: var(--color-accent); color: #fff; font-size: .7rem; letter-spacing: -.02em; }
+.mark span { position: absolute; width: .4rem; height: .4rem; border-radius: 50%; background: #b8d49c; right: -.1rem; top: -.1rem; border: 2px solid white; box-sizing: content-box; }
+.navigation { height: 100%; display: flex; align-items: stretch; gap: 2rem; }
+.navigation a { display: flex; align-items: center; position: relative; color: var(--color-muted); font-size: .8rem; font-weight: 600; text-decoration: none; }
+.navigation a:hover { color: var(--color-accent); }
+.navigation .active { color: var(--color-accent); }
+.active::after { content: ''; height: 2px; position: absolute; bottom: -1px; left: 0; right: 0; background: var(--color-accent); }
+.area { display: flex; align-items: center; gap: .5rem; color: var(--color-muted); font-size: .75rem; white-space: nowrap; }
+.area span { width: .4rem; height: .4rem; border-radius: 50%; background: var(--color-accent); }
+.main { display: flex; flex: 1; min-width: 0; min-height: 0; position: relative; }
+.skipLink { position: absolute; top: .75rem; left: .75rem; z-index: 2000; padding: .75rem 1rem; transform: translateY(-200%); background: white; border-radius: .5rem; }
+.skipLink:focus { transform: translateY(0); }
+@media (max-width: 680px) { .header { gap: 1rem; } .area { display: none; } .navigation { gap: 1rem; } .brand { font-size: .88rem; } }
+@media (max-width: 430px) { .navigation a:first-child { display: none; } .brandLight { display: none; } }

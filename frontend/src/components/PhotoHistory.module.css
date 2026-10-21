@@ -1,0 +1,32 @@
+.section { margin-top: 1.25rem; padding: clamp(1.25rem, 2.5vw, 2rem); border: 1px solid var(--color-border); border-radius: var(--radius-large); background: var(--color-surface); box-shadow: var(--shadow-panel); min-width: 0; }
+.header { display: flex; justify-content: space-between; gap: 1rem; align-items: end; margin-bottom: 1.25rem; }
+.eyebrow { margin: 0 0 .45rem; color: var(--color-accent); font-size: .62rem; font-weight: 750; letter-spacing: .12em; }
+.header h2, .dialogHeader h2 { margin: 0; font-size: 1.15rem; letter-spacing: -.025em; }
+.header p:last-child { margin: .5rem 0 0; color: var(--color-muted); font-size: .75rem; line-height: 1.5; }
+.scrollButtons { display: flex; gap: .4rem; flex: none; }
+.scrollButtons button, .dialogFooter button, .close { border: 1px solid var(--color-border); border-radius: var(--radius-small); background: white; color: var(--color-text); cursor: pointer; }
+.scrollButtons button { width: 2.3rem; height: 2.3rem; font-size: 1rem; }
+.scrollButtons button:disabled, .dialogFooter button:disabled { opacity: .4; cursor: default; }
+.rail { display: flex; gap: .9rem; overflow-x: auto; overscroll-behavior-inline: contain; scroll-snap-type: x proximity; margin: 0; padding: 0 0 .4rem; list-style: none; }
+.item { flex: 0 0 clamp(14rem, 28%, 18rem); scroll-snap-align: start; }
+.photoCard { display: flex; flex-direction: column; width: 100%; height: 100%; padding: .55rem; border: 1px solid var(--color-border); border-radius: .75rem; background: #fff; color: var(--color-text); text-align: left; cursor: pointer; }
+.photoCard:hover { border-color: #9cb9a5; box-shadow: 0 5px 18px rgb(25 50 36 / 8%); }
+.placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .65rem; width: 100%; aspect-ratio: 16 / 9; border-radius: .5rem; background: linear-gradient(145deg, #e5eee4, #d6e4da); color: #456451; font-size: .7rem; font-weight: 700; letter-spacing: .02em; }
+.placeholderMark { display: grid; place-items: center; width: 2.5rem; height: 2.5rem; border: 1px solid #a4bdaa; border-radius: .65rem; color: var(--color-accent); font-size: .75rem; }
+.placeholderLarge { max-height: min(56vh, 42rem); min-height: 12rem; aspect-ratio: 16 / 9; font-size: .9rem; }
+.placeholderLarge .placeholderMark { width: 4rem; height: 4rem; font-size: 1.2rem; }
+.photoDetails { display: block; padding: .8rem .3rem .4rem; }
+.photoNumber { display: block; margin-bottom: .7rem; font-size: .78rem; font-weight: 750; }
+.facts { display: grid; gap: .45rem; margin: 0; }
+.facts > span { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .2rem .55rem; }
+.facts > span > span { color: var(--color-muted); font-size: .66rem; }
+.facts strong { color: var(--color-text); font-size: .68rem; font-weight: 650; }
+.empty { margin: 0; padding: 2rem; border: 1px dashed #c5d4c7; border-radius: .75rem; color: var(--color-muted); font-size: .85rem; text-align: center; }
+.backdrop { position: fixed; inset: 0; z-index: 3000; display: grid; place-items: center; padding: 1rem; background: rgb(14 31 21 / 76%); }
+.dialog { width: min(100%, 66rem); max-height: calc(100svh - 2rem); overflow-y: auto; padding: clamp(1rem, 2vw, 1.5rem); border-radius: var(--radius-large); background: white; box-shadow: 0 1.5rem 5rem rgb(0 0 0 / 25%); }
+.dialogHeader { display: flex; justify-content: space-between; gap: 1rem; align-items: start; margin-bottom: 1rem; }
+.close { flex: none; width: 2.5rem; height: 2.5rem; font-size: 1rem; }
+.dialogFooter { display: flex; align-items: center; justify-content: space-between; gap: 1rem; margin-top: 1rem; }
+.dialogFooter button { flex: none; min-width: 5.5rem; padding: .65rem .75rem; font-size: .72rem; font-weight: 700; }
+.dialogFooter .facts { flex: 1; max-width: 30rem; }
+@media (max-width: 720px) { .item { flex-basis: 15rem; } .dialogFooter { flex-wrap: wrap; } .dialogFooter .facts { flex-basis: 100%; order: -1; } }
