@@ -4,6 +4,9 @@
 .header h2, .dialogHeader h2 { margin: 0; font-size: 1.15rem; letter-spacing: -.025em; }
 .header p:last-child { margin: .5rem 0 0; color: var(--color-muted); font-size: .75rem; line-height: 1.5; }
 .scrollButtons { display: flex; gap: .4rem; flex: none; }
+.jumpToUpload { flex: none; padding: .45rem .6rem; border: 1px solid var(--color-border); border-radius: var(--radius-small); background: #edf3ed; color: var(--color-accent); font: inherit; font-size: .7rem; font-weight: 700; cursor: pointer; }
+.jumpToUpload:hover { border-color: #9cb9a5; }
+.jumpToUpload:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .scrollButtons button, .dialogFooter button, .close { border: 1px solid var(--color-border); border-radius: var(--radius-small); background: white; color: var(--color-text); cursor: pointer; }
 .scrollButtons button { width: 2.3rem; height: 2.3rem; font-size: 1rem; }
 .scrollButtons button:disabled, .dialogFooter button:disabled { opacity: .4; cursor: default; }
@@ -11,6 +14,10 @@
 .item { flex: 0 0 clamp(14rem, 28%, 18rem); scroll-snap-align: start; }
 .photoCard { display: flex; flex-direction: column; width: 100%; height: 100%; padding: .55rem; border: 1px solid var(--color-border); border-radius: .75rem; background: #fff; color: var(--color-text); text-align: left; cursor: pointer; }
 .photoCard:hover { border-color: #9cb9a5; box-shadow: 0 5px 18px rgb(25 50 36 / 8%); }
+.uploadCard { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .55rem; width: 100%; height: 100%; min-height: 13.5rem; padding: 1rem; border: 1px dashed #a9bfae; border-radius: .75rem; background: #f4f8f4; color: var(--color-accent); font: inherit; text-align: center; cursor: not-allowed; }
+.uploadCard strong { font-size: .84rem; }
+.uploadCard > span:last-child { color: var(--color-muted); font-size: .72rem; }
+.uploadPlus { display: grid; place-items: center; width: 2.7rem; height: 2.7rem; border: 1px solid #bdd0c0; border-radius: .65rem; font-size: 1.5rem; line-height: 1; }
 .placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .65rem; width: 100%; aspect-ratio: 16 / 9; border-radius: .5rem; background: linear-gradient(145deg, #e5eee4, #d6e4da); color: #456451; font-size: .7rem; font-weight: 700; letter-spacing: .02em; }
 .placeholderMark { display: grid; place-items: center; width: 2.5rem; height: 2.5rem; border: 1px solid #a4bdaa; border-radius: .65rem; color: var(--color-accent); font-size: .75rem; }
 .placeholderLarge { max-height: min(56vh, 42rem); min-height: 12rem; aspect-ratio: 16 / 9; font-size: .9rem; }
@@ -22,6 +29,7 @@
 .facts > span > span { color: var(--color-muted); font-size: .66rem; }
 .facts strong { color: var(--color-text); font-size: .68rem; font-weight: 650; }
 .empty { margin: 0; padding: 2rem; border: 1px dashed #c5d4c7; border-radius: .75rem; color: var(--color-muted); font-size: .85rem; text-align: center; }
+.emptyWithUpload { margin: 0 0 .8rem; color: var(--color-muted); font-size: .8rem; }
 .backdrop { position: fixed; inset: 0; z-index: 3000; display: grid; place-items: center; padding: 1rem; background: rgb(14 31 21 / 76%); }
 .dialog { width: min(100%, 66rem); max-height: calc(100svh - 2rem); overflow-y: auto; padding: clamp(1rem, 2vw, 1.5rem); border-radius: var(--radius-large); background: white; box-shadow: 0 1.5rem 5rem rgb(0 0 0 / 25%); }
 .dialogHeader { display: flex; justify-content: space-between; gap: 1rem; align-items: start; margin-bottom: 1rem; }

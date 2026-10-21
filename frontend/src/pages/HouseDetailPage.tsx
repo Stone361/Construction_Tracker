@@ -1,10 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useDemoIdentity } from '../app/DemoIdentityContext'
 import { Link, useLocation, useParams } from 'react-router'
 import { ApiError } from '../services/apiClient'
 import { PhotoHistory } from '../components/PhotoHistory'
 import { displayChicagoBusinessDate, displayUtcInstant, getHouseDetail } from '../services/houseDetail'
 import type { HouseDetail } from '../services/houseDetail'
 import { stageLabel } from '../services/houses'
+import { canManageHouse } from '../services/demoPermissions'
 import { mapSnapshotFromState } from '../services/mapNavigation'
 import type { MapSnapshot } from '../services/mapNavigation'
 import styles from './HouseDetailPage.module.css'
@@ -28,6 +30,7 @@ function sourceLink(url: string | null) {
 }
 
 export function HouseDetailPage({ savedSnapshot = null }: { savedSnapshot?: MapSnapshot | null }) {
+  const { identity, version } = useDemoIdentity()
   const { id: rawId } = useParams()
   const location = useLocation()
   const snapshot = mapSnapshotFromState(location.state) ?? savedSnapshot
@@ -35,7 +38,7 @@ export function HouseDetailPage({ savedSnapshot = null }: { savedSnapshot?: MapS
   const id = rawId && /^[1-9]\d*$/.test(rawId) && Number.isSafeInteger(Number(rawId)) ? Number(rawId) : null
   const [retry, setRetry] = useState(0)
   const [result, setResult] = useState<{ key: string; state: DetailState } | null>(null)
-  const key = id === null ? 'invalid' : `${id}:${retry}`
+  const key = id === null ? 'invalid' : `${version}:${id}:${retry}`
   const latestKey = useRef(key)
 
   useLayoutEffect(() => {
@@ -45,7 +48,7 @@ export function HouseDetailPage({ savedSnapshot = null }: { savedSnapshot?: MapS
   useEffect(() => {
     if (id === null) return
     const controller = new AbortController()
-    getHouseDetail(id, controller.signal).then(
+    getHouseDetail(id, controller.signal, identity).then(
       house => {
         if (!controller.signal.aborted && latestKey.current === key) {
           setResult({ key, state: { kind: 'ready', house } })
@@ -60,7 +63,7 @@ export function HouseDetailPage({ savedSnapshot = null }: { savedSnapshot?: MapS
       },
     )
     return () => controller.abort()
-  }, [id, key])
+  }, [id, key, identity])
 
   const state: DetailState = result?.key === key ? result.state : { kind: 'loading' }
 
@@ -110,6 +113,11 @@ export function HouseDetailPage({ savedSnapshot = null }: { savedSnapshot?: MapS
               </dl>
               {state.house.community?.startsWith('Austin Council District ') &&
                 <p className={styles.areaNote}>Austin Council District is an administrative district, not a residential community.</p>}
+              {identity.role === 'SITE_MANAGER' && <p className={styles.areaNote}>
+                Demo manager area: {identity.community}. {canManageHouse(identity, state.house.community)
+                  ? 'Management entry is available for this house.'
+                  : 'This house is outside your management area; management entry is hidden.'}
+              </p>}
             </section>
             <section className={styles.card} aria-labelledby="source-heading">
               <h2 id="source-heading">Record and source</h2>
@@ -125,7 +133,8 @@ export function HouseDetailPage({ savedSnapshot = null }: { savedSnapshot?: MapS
               </dl>
             </section>
             </div>
-            <PhotoHistory key={state.house.id} photos={state.house.photos} />
+            <PhotoHistory key={`${version}:${state.house.id}`} photos={state.house.photos}
+              canUpload={canManageHouse(identity, state.house.community)} />
           </div>
         )}
       </div>

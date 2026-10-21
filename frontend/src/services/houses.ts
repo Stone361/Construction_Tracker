@@ -1,4 +1,5 @@
 import { ApiError, getJson } from './apiClient'
+import type { DemoIdentity } from '../app/DemoIdentityContext'
 
 // GET /api/houses returns a bare HouseResponse[]. Keep only fields displayed
 // in the map workspace; other backend fields are introduced when needed.
@@ -112,8 +113,14 @@ export function houseListPath(query: HouseQuery): string {
   return `/api/houses?${params}`
 }
 
-export async function getHouses(query: HouseQuery, signal?: AbortSignal): Promise<HouseSummary[]> {
-  return parseHouseList(await getJson(houseListPath(query), signal))
+export async function getHouses(query: HouseQuery, signal: AbortSignal | undefined, identity: DemoIdentity): Promise<HouseSummary[]> {
+  return parseHouseList(await getJson(houseListPath(query), signal, identity))
+}
+
+export async function getCommunityNames(identity: DemoIdentity, signal?: AbortSignal): Promise<string[]> {
+  const houses = parseHouseList(await getJson('/api/houses', signal, identity))
+  return [...new Set(houses.map(house => house.community).filter((name): name is string => name !== null))]
+    .sort((a, b) => a.localeCompare(b))
 }
 
 export function hasValidLocation(house: HouseSummary): house is HouseSummary & { lat: number; lng: number } {

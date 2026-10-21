@@ -7,6 +7,8 @@ import { getHouseDetail } from '../services/houseDetail'
 import type { HouseDetail } from '../services/houseDetail'
 import type { MapSnapshot } from '../services/mapNavigation'
 import { ApiError } from '../services/apiClient'
+import { DemoIdentityProvider } from '../app/DemoIdentityProvider'
+import { identityStorageKey, identityStorageVersion, useDemoIdentity } from '../app/DemoIdentityContext'
 
 vi.mock('../services/houseDetail', async importOriginal => {
   const original = await importOriginal<typeof import('../services/houseDetail')>()
@@ -36,10 +38,115 @@ function renderDetail(path = '/houses/12', state?: unknown) {
   </MemoryRouter>)
 }
 
-beforeEach(() => vi.mocked(getHouseDetail).mockReset())
+function IdentityControls() {
+  const { selectRole, selectSiteManager } = useDemoIdentity()
+  return <>
+    <button type="button" onClick={() => selectRole('ADMIN')}>Use Admin</button>
+    <button type="button" onClick={() => selectRole('VIEWER')}>Use Viewer</button>
+    <button type="button" onClick={() => selectSiteManager('Austin Council District 8')}>Manage own community</button>
+    <button type="button" onClick={() => selectSiteManager('Austin Council District 5')}>Manage other community</button>
+    <button type="button" onClick={() => selectSiteManager('austin council district 8')}>Manage lowercase community</button>
+  </>
+}
+
+function renderDetailWithIdentity() {
+  return render(<DemoIdentityProvider><MemoryRouter initialEntries={['/houses/12']}>
+    <IdentityControls /><Routes><Route path="houses/:id" element={<HouseDetailPage />} /></Routes>
+  </MemoryRouter></DemoIdentityProvider>)
+}
+
+beforeEach(() => {
+  sessionStorage.clear()
+  vi.mocked(getHouseDetail).mockReset()
+})
 afterEach(() => vi.clearAllMocks())
 
 describe('house detail page', () => {
+  it('updates the upload hint for Admin, Viewer and exact Site Manager community', async () => {
+    vi.mocked(getHouseDetail).mockResolvedValue(house)
+    const user = userEvent.setup()
+    renderDetailWithIdentity()
+    await screen.findByRole('heading', { name: '12 Main St' })
+    expect(screen.queryByRole('button', { name: 'Upload photo coming soon' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Use Admin' }))
+    expect(await screen.findByRole('button', { name: 'Upload photo coming soon' })).toBeDisabled()
+    expect(screen.getByText('No site photos yet.')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Manage own community' }))
+    expect(await screen.findByRole('button', { name: 'Upload photo coming soon' })).toBeDisabled()
+    expect(screen.getByText(/Demo manager area: Austin Council District 8.*Management entry is available/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Manage other community' }))
+    await screen.findByRole('heading', { name: '12 Main St' })
+    expect(screen.queryByRole('button', { name: 'Upload photo coming soon' })).not.toBeInTheDocument()
+    expect(screen.getByText(/Demo manager area: Austin Council District 5.*outside your management area/)).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Manage lowercase community' }))
+    await screen.findByRole('heading', { name: '12 Main St' })
+    expect(screen.queryByRole('button', { name: 'Upload photo coming soon' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Use Viewer' }))
+    await screen.findByRole('heading', { name: '12 Main St' })
+    expect(screen.queryByRole('button', { name: 'Upload photo coming soon' })).not.toBeInTheDocument()
+  })
+
+  it('hides the old upload hint immediately during identity reload and after an authorization error', async () => {
+    let rejectViewer!: (reason: Error) => void
+    vi.mocked(getHouseDetail).mockResolvedValueOnce(house).mockResolvedValueOnce(house)
+      .mockReturnValueOnce(new Promise((_, reject) => { rejectViewer = reject }))
+    const user = userEvent.setup()
+    renderDetailWithIdentity()
+    await screen.findByRole('heading', { name: '12 Main St' })
+    await user.click(screen.getByRole('button', { name: 'Use Admin' }))
+    expect(await screen.findByRole('button', { name: 'Upload photo coming soon' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Use Viewer' }))
+    expect(screen.getByRole('status')).toHaveTextContent('Loading house details')
+    expect(screen.queryByRole('button', { name: 'Upload photo coming soon' })).not.toBeInTheDocument()
+    rejectViewer(new ApiError('The current demo identity is not permitted (HTTP 403).', 403))
+    expect(await screen.findByRole('alert')).toHaveTextContent('HTTP 403')
+    expect(screen.queryByRole('button', { name: 'Upload photo coming soon' })).not.toBeInTheDocument()
+  })
+
+  it('does not reveal an Admin upload hint before details load or after detail failure', async () => {
+    sessionStorage.setItem(identityStorageKey, JSON.stringify({ version: identityStorageVersion,
+      identity: { user: 'frontend-demo', role: 'ADMIN', community: null } }))
+    vi.mocked(getHouseDetail).mockRejectedValue(new ApiError('Forbidden (HTTP 403).', 403))
+    renderDetailWithIdentity()
+    expect(screen.getByRole('status')).toHaveTextContent('Loading house details')
+    expect(screen.queryByRole('button', { name: 'Upload photo coming soon' })).not.toBeInTheDocument()
+    expect(await screen.findByRole('alert')).toHaveTextContent('HTTP 403')
+    expect(screen.queryByRole('button', { name: 'Upload photo coming soon' })).not.toBeInTheDocument()
+  })
+  it('refetches the same house after identity changes and never displays the previous identity detail', async () => {
+    vi.mocked(getHouseDetail).mockResolvedValueOnce(house)
+      .mockResolvedValueOnce({ ...house, address: 'Admin verified house' })
+    function Switch() {
+      const { selectRole } = useDemoIdentity()
+      return <button type="button" onClick={() => selectRole('ADMIN')}>Use Admin</button>
+    }
+    render(<DemoIdentityProvider><MemoryRouter initialEntries={['/houses/12']}>
+      <Switch /><Routes><Route path="houses/:id" element={<HouseDetailPage />} /></Routes>
+    </MemoryRouter></DemoIdentityProvider>)
+    expect(await screen.findByRole('heading', { name: '12 Main St' })).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Use Admin' }))
+    expect(await screen.findByRole('heading', { name: 'Admin verified house' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '12 Main St' })).not.toBeInTheDocument()
+    expect(vi.mocked(getHouseDetail).mock.calls[1]?.[2]?.role).toBe('ADMIN')
+  })
+
+  it('aborts an unfinished detail request when identity changes', async () => {
+    let resolveOld!: (value: HouseDetail) => void
+    vi.mocked(getHouseDetail).mockReturnValueOnce(new Promise(done => { resolveOld = done }))
+      .mockResolvedValueOnce({ ...house, address: 'Verified under Admin' })
+    function Switch() {
+      const { selectRole } = useDemoIdentity()
+      return <button type="button" onClick={() => selectRole('ADMIN')}>Use Admin</button>
+    }
+    render(<DemoIdentityProvider><MemoryRouter initialEntries={['/houses/12']}>
+      <Switch /><Routes><Route path="houses/:id" element={<HouseDetailPage />} /></Routes>
+    </MemoryRouter></DemoIdentityProvider>)
+    await userEvent.click(screen.getByRole('button', { name: 'Use Admin' }))
+    expect(await screen.findByRole('heading', { name: 'Verified under Admin' })).toBeInTheDocument()
+    resolveOld(house)
+    await waitFor(() => expect(screen.queryByRole('heading', { name: '12 Main St' })).not.toBeInTheDocument())
+    expect(vi.mocked(getHouseDetail).mock.calls[0]?.[1]?.aborted).toBe(true)
+  })
   it('loads the independent detail on a direct route and requests again after remount', async () => {
     vi.mocked(getHouseDetail).mockResolvedValue(house)
     const first = renderDetail()

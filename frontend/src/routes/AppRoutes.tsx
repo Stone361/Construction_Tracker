@@ -4,6 +4,7 @@ import { AppShell } from '../app/AppShell'
 import { HomePage } from '../pages/HomePage'
 import { MapPage } from '../pages/MapPage'
 import { HouseDetailPage } from '../pages/HouseDetailPage'
+import { CreateHousePage } from '../pages/CreateHousePage'
 import { NotFoundPage } from '../pages/NotFoundPage'
 import type { MapSnapshot } from '../services/mapNavigation'
 
@@ -14,6 +15,7 @@ export function AppRoutes() {
       <Route element={<AppShell />}>
         <Route index element={<HomePage />} />
         <Route path="map" element={<MapPage savedSnapshot={mapSnapshot} onSnapshotChange={setMapSnapshot} />} />
+        <Route path="houses/new" element={<CreateHousePage />} />
         <Route path="houses/:id" element={<HouseDetailPage savedSnapshot={mapSnapshot} />} />
         <Route path="*" element={<NotFoundPage />} />
       </Route>

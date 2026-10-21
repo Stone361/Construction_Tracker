@@ -20,7 +20,7 @@ function Placeholder({ large = false }: { large?: boolean }) {
   </span>
 }
 
-export function PhotoHistory({ photos }: { photos: HousePhoto[] }) {
+export function PhotoHistory({ photos, canUpload = false }: { photos: HousePhoto[]; canUpload?: boolean }) {
   const railRef = useRef<HTMLOListElement | null>(null)
   const dialogRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
@@ -50,7 +50,7 @@ export function PhotoHistory({ photos }: { photos: HousePhoto[] }) {
       window.removeEventListener('resize', measure)
       observer?.disconnect()
     }
-  }, [photos])
+  }, [photos, canUpload])
 
   useEffect(() => {
     if (!isOpen) return
@@ -85,6 +85,11 @@ export function PhotoHistory({ photos }: { photos: HousePhoto[] }) {
     rail.scrollBy({ left: direction * Math.max(rail.clientWidth * .8, 240), behavior: 'smooth' })
   }
 
+  const jumpToUpload = () => {
+    const rail = railRef.current
+    if (rail) rail.scrollTo({ left: rail.scrollWidth, behavior: 'smooth' })
+  }
+
   return <section className={styles.section} aria-labelledby="photo-history-heading">
     <div className={styles.header}>
       <div>
@@ -92,12 +97,15 @@ export function PhotoHistory({ photos }: { photos: HousePhoto[] }) {
         <h2 id="photo-history-heading">Photo history</h2>
         <p>Photo details come from the house record. Images are placeholders until protected viewing is available.</p>
       </div>
+      {canUpload && scrollable.right && <button className={styles.jumpToUpload} type="button"
+        onClick={jumpToUpload}>Upload card at end →</button>}
       {(scrollable.left || scrollable.right) && <div className={styles.scrollButtons} aria-label="Photo list controls">
         <button type="button" aria-label="Scroll photos left" disabled={!scrollable.left} onClick={() => scroll(-1)}>←</button>
         <button type="button" aria-label="Scroll photos right" disabled={!scrollable.right} onClick={() => scroll(1)}>→</button>
       </div>}
     </div>
-    {photos.length === 0 ? <p className={styles.empty}>No site photos yet.</p> :
+    {photos.length === 0 && <p className={canUpload ? styles.emptyWithUpload : styles.empty}>No site photos yet.</p>}
+    {(photos.length > 0 || canUpload) &&
       <ol className={styles.rail} ref={railRef} aria-label="House photo history">
         {photos.map((photo, index) => <li key={photo.id} className={styles.item}>
           <button type="button" className={styles.photoCard} aria-label={`Preview photo ${index + 1}`}
@@ -106,6 +114,13 @@ export function PhotoHistory({ photos }: { photos: HousePhoto[] }) {
             <span className={styles.photoDetails}><span className={styles.photoNumber}>Photo {index + 1}</span><PhotoFacts photo={photo} /></span>
           </button>
         </li>)}
+        {canUpload && <li className={styles.item}>
+          <button type="button" className={styles.uploadCard} disabled aria-label="Upload photo coming soon">
+            <span className={styles.uploadPlus} aria-hidden="true">+</span>
+            <strong>Upload photo</strong>
+            <span>Coming soon</span>
+          </button>
+        </li>}
       </ol>}
     {selectedPhoto && createPortal(
       <div className={styles.backdrop}>

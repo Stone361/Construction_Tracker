@@ -2,8 +2,15 @@
 .mapPane { position: relative; min-width: 0; min-height: 0; isolation: isolate; }
 .infoPane { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border-left: 1px solid var(--color-border); background: var(--color-surface); }
 .infoHeader { flex: none; padding: 1.25rem clamp(1.5rem, 3vw, 2.5rem) 1rem; border-bottom: 1px solid var(--color-border); }
+.backToList { display: inline-flex; align-items: center; gap: .4rem; margin: 0 0 .85rem; padding: .35rem 0; border: 0; background: transparent; color: var(--color-accent); font: inherit; font-size: .76rem; font-weight: 650; cursor: pointer; }
+.backToList:hover { text-decoration: underline; }
+.backToList:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .infoHeader p { margin: 0 0 .45rem; color: var(--color-muted); font-size: .6rem; font-weight: 700; letter-spacing: .15em; }
 .infoHeader h2 { margin: 0; font-size: 1.35rem; font-weight: 650; letter-spacing: -.04em; }
+.infoHeadingRow { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.addHouse { flex: none; display: inline-flex; align-items: center; gap: .45rem; border: 1px solid var(--color-border); border-radius: var(--radius-small); background: #edf3ed; color: var(--color-accent); padding: .45rem .6rem; font: inherit; font-size: .7rem; font-weight: 700; text-decoration: none; }
+.addHouse:hover { border-color: #9cb9a5; background: #e3eee4; }
+.addHouse:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .infoHeader span { display: block; margin-top: .4rem; color: var(--color-muted); font-size: .7rem; line-height: 1.35; }
 .stageFilter { display: grid; gap: .4rem; margin-top: .9rem; color: var(--color-muted); font-size: .72rem; font-weight: 600; }
 .stageFilter select { width: 100%; padding: .55rem .7rem; border: 1px solid var(--color-border); border-radius: var(--radius-small); background: var(--color-surface); color: var(--color-text); font: inherit; font-size: .82rem; }

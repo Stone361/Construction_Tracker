@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useDemoIdentity } from '../app/DemoIdentityContext'
 import { Link, useLocation, useNavigate } from 'react-router'
 import { ConstructionMap } from '../components/map/ConstructionMap'
 import { HouseMarkers } from '../components/map/HouseMarkers'
@@ -13,6 +14,7 @@ import { ApiError } from '../services/apiClient'
 import { constructionStages, getHouses, hasValidLocation, houseListPath, sortHousesByPhotoDate, stageLabel } from '../services/houses'
 import type { ConstructionStage, HouseBounds, HouseQuery, HouseSummary } from '../services/houses'
 import { mapSnapshotFromState } from '../services/mapNavigation'
+import { canCreateHouse } from '../services/demoPermissions'
 import type { MapSnapshot, MapView } from '../services/mapNavigation'
 import styles from './MapPage.module.css'
 
@@ -26,6 +28,7 @@ export function MapPage({ savedSnapshot = null, onSnapshotChange }: {
   onSnapshotChange?: (snapshot: MapSnapshot) => void
 } = {}) {
   const navigate = useNavigate()
+  const { identity, version } = useDemoIdentity()
   const location = useLocation()
   const [initialSnapshot] = useState(() => mapSnapshotFromState(location.state) ?? savedSnapshot)
   const [initialView] = useState<MapView>(() => initialSnapshot?.view ?? {
@@ -45,7 +48,7 @@ export function MapPage({ savedSnapshot = null, onSnapshotChange }: {
   const [selectedHouseId, setSelectedHouseId] = useState<number | null>(initialSnapshot?.selectedHouseId ?? null)
   const [focusRequest, setFocusRequest] = useState<MapFocusRequest | null>(null)
 
-  const queryKey = query === null ? null : `${houseListPath(query)}:${requestKey}`
+  const queryKey = query === null ? null : `${version}:${houseListPath(query)}:${requestKey}`
   const latestQueryKey = useRef(queryKey)
 
   const clearMapHideTimer = useCallback(() => {
@@ -92,7 +95,7 @@ export function MapPage({ savedSnapshot = null, onSnapshotChange }: {
   useEffect(() => {
     if (query === null || queryKey === null) return
     const controller = new AbortController()
-    getHouses(query, controller.signal).then(
+    getHouses(query, controller.signal, identity).then(
       houses => {
         if (controller.signal.aborted || latestQueryKey.current !== queryKey) return
         setResult({ key: queryKey, state: { kind: 'ready', houses } })
@@ -109,7 +112,7 @@ export function MapPage({ savedSnapshot = null, onSnapshotChange }: {
       },
     )
     return () => controller.abort()
-  }, [query, queryKey])
+  }, [query, queryKey, identity])
 
   const onBoundsChange = useCallback((nextBounds: HouseBounds, nextView?: MapView) => {
     if (nextView) setView(nextView)
@@ -187,9 +190,17 @@ export function MapPage({ savedSnapshot = null, onSnapshotChange }: {
         <p className={styles.hint}>Drag to explore<span> · </span>Scroll to zoom</p>
       </div>
       <aside className={styles.infoPane} aria-label="House information">
-        <div className={styles.infoHeader}>
+        <header className={styles.infoHeader}>
+          {selectedHouse && <button className={styles.backToList} type="button" onClick={() => {
+            setSelectedHouseId(null)
+            setFocusRequest(null)
+          }}><Icon name="arrow-left" size={16} />Back to list</button>}
           <p>MAP WORKSPACE</p>
-          <h2>{selectedHouse ? 'House information' : 'Recent photo activity'}</h2>
+          <div className={styles.infoHeadingRow}>
+            <h2>{selectedHouse ? 'House information' : 'Recent photo activity'}</h2>
+            {!selectedHouse && canCreateHouse(identity) &&
+              <Link className={styles.addHouse} to="/houses/new" state={{ mapSnapshot: { view, stage, selectedHouseId } }} aria-label="Add house">+ Add house</Link>}
+          </div>
           {!selectedHouse && <span>Sorted by latest photo business date; undated houses last.</span>}
           <label className={styles.stageFilter} htmlFor="construction-stage">
             <span>Construction stage</span>
@@ -200,7 +211,7 @@ export function MapPage({ savedSnapshot = null, onSnapshotChange }: {
               {constructionStages.map(stage => <option key={stage} value={stage}>{stageLabel(stage)}</option>)}
             </select>
           </label>
-        </div>
+        </header>
         <div className={styles.dataStatus}>
           {houseState.kind === 'loading' && <p role="status">Loading houses from the backend…</p>}
           {houseState.kind === 'error' && <div role="alert">
@@ -216,10 +227,7 @@ export function MapPage({ savedSnapshot = null, onSnapshotChange }: {
           </p>}
         </div>
         <div className={styles.panelBody}>
-          {houseState.kind === 'ready' && selectedHouse && <HouseInfo house={selectedHouse} onDetails={openDetails} onBack={() => {
-            setSelectedHouseId(null)
-            setFocusRequest(null)
-          }} />}
+          {houseState.kind === 'ready' && selectedHouse && <HouseInfo house={selectedHouse} onDetails={openDetails} />}
           {houseState.kind === 'ready' && !selectedHouse && houses.length > 0 &&
             <ol className={styles.cardList} aria-label="Houses sorted by latest photo business date">
               {sortHousesByPhotoDate(houses).map(house =>

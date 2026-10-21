@@ -25,7 +25,7 @@ const test = base.extend<{ networkGuard: void }>({
     for (const headers of apiHeaders) {
       expect(headers['x-user']).toBe('frontend-demo')
       expect(headers['x-role']).toBe('VIEWER')
-      expect(headers['x-community']).toBe('Austin Council District 8')
+      expect(headers['x-community']).toBeUndefined()
     }
     expect(leakedHeaders, 'tiles must not receive business identity').toEqual([])
     expect(runtimeErrors, 'no uncaught browser errors').toEqual([])
@@ -244,7 +244,7 @@ test('long house list scrolls inside the right pane while the page and title sta
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/map')
   const list = page.getByRole('list', { name: 'Houses sorted by latest photo business date' })
-  await expect(list.getByRole('button')).toHaveCount(12)
+  await expect(list.getByRole('listitem')).toHaveCount(12)
   const before = await page.getByRole('heading', { name: 'Recent photo activity' }).boundingBox()
   const body = list.locator('..')
   expect(await body.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)

@@ -9,7 +9,7 @@ Construction Tracker 是面向美国在建住宅管理的地图可视化 Web 应
 | 范围 | 当前状态 |
 | --- | --- |
 | 后端 | 已实现七个核心 API，以及权限、照片、施工阶段和统计规则；正式测试已有 396 项通过记录，其中真实 MySQL 测试 39 项 |
-| 前端 | React + TypeScript + Vite 基础、页面 A、页面 B 固定双栏地图与筛选、页面 C 独立详情已实现；1.1、1.2、1.3-A、1.3-B、4-F1、4-F2 已通过 Chrome 人工验收（PASS），范围见第 6 节 |
+| 前端 | React + TypeScript + Vite 基础、页面 A、页面 B 固定双栏地图与筛选、页面 C 独立详情及页面 D 新增房屋已实现；1.1、1.2、1.3-A、1.3-B、4-F1、4-F2、AUTH-F1～F3 和页面 D 已通过 Chrome 人工验收（PASS），范围见第 6 节 |
 | 后续工作 | 受保护的真实封面／照片原图读取、照片及其他业务写操作、统计界面尚未实现；后续按第 6 节原有业务组分步实施，每步须另获授权并独立审核 |
 
 以上测试结果为已有验证事实；后续代码变更仍需按影响范围重新验证。
@@ -52,7 +52,7 @@ Construction Tracker 是面向美国在建住宅管理的地图可视化 Web 应
 
 **管理层是业务身份，不等于 ADMIN 系统角色**；只需监督进度的管理层人员可使用 VIEWER。桌面和手机适用相同权限。
 
-当前按原题通过 `X-User`、`X-Role`、`X-Community` 请求头模拟身份，**不是真实登录或生产级认证**。所有 `/api/**` 请求须提供用户与合法角色，SITE_MANAGER 还须提供社区。首尾空白会去除，角色与社区大小写敏感；缺失或非法身份返回 401，权限不足返回 403。SITE_MANAGER 的社区归属限制写操作，不限制跨社区读取。前端目前沿用固定演示身份头；正式登录方案留待单独决策。具体规则见 [HeaderIdentityParser](./backend/src/main/java/com/example/constructiontracker/auth/HeaderIdentityParser.java) 与 [AuthorizationService](./backend/src/main/java/com/example/constructiontracker/service/AuthorizationService.java)。
+当前按原题通过 `X-User`、`X-Role`、`X-Community` 请求头模拟身份，**不是真实登录或生产级认证**。所有 `/api/**` 请求须提供用户与合法角色，SITE_MANAGER 还须提供社区。首尾空白会去除，角色与社区大小写敏感；缺失或非法身份返回 401，权限不足返回 403。SITE_MANAGER 的社区归属限制写操作，不限制跨社区读取。前端可在导航栏切换演示身份，默认 VIEWER；正式登录方案留待单独决策。具体规则见 [HeaderIdentityParser](./backend/src/main/java/com/example/constructiontracker/auth/HeaderIdentityParser.java) 与 [AuthorizationService](./backend/src/main/java/com/example/constructiontracker/service/AuthorizationService.java)。
 
 ## 5. 原始需求与 API 契约约束
 
@@ -104,7 +104,11 @@ Construction Tracker 是面向美国在建住宅管理的地图可视化 Web 应
 
 ### 公共前端身份能力
 
-当前 JSON API 使用固定演示身份头，并正确处理身份错误；这不是真实登录。正式登录方案及是否需要统一演示身份切换器待单独决定，不作为第 4 组完成条件。未来接入受保护图片或写操作时，JSON 与图片须使用同一当前身份，切换后隔离旧请求和旧资料；按后端规则处理 401／403，SITE_MANAGER 可跨社区读取但只能修改所属社区，隐藏前端按钮不能代替后端鉴权。
+**AUTH-F1～F3 已通过人工 Chrome 验收（PASS）。** A／B／C／D 页共用导航栏中的 Demo identity 选择器，默认 Viewer。可直接选 Admin；选择 Site Manager 时，须再从现有房屋 API 返回的真实社区名称中选定所属社区，未选定前仍保持原身份。切回 Viewer 即可退出管理演示身份。当前标签页用版本化 `sessionStorage` 保存选择，损坏或旧格式数据回退 Viewer；这只是模拟身份，**不是真实登录**，正式认证方案仍待决定。
+
+业务 API 统一使用当前身份生成 `X-User`、`X-Role`，仅 Site Manager 发送 `X-Community`；外部地图瓦片不带这些身份头。身份切换不刷新页面：页面 B 保留地图视角与阶段筛选，页面 C 保留房屋 ID；旧请求取消并隔离迟到响应，当前页面重新获取数据。401、403、404、网络失败分别反馈，失败时可重试。AUTH-F2 的身份数据流、权限错误与请求竞态已通过自动化验证和人工验收。后续受保护照片读取与写操作复用同一身份头生成方式，并在身份变化时释放旧图片资源；SITE_MANAGER 可跨社区读取但只能修改所属社区，前端入口控制不能代替后端鉴权。第 6 组照片业务仍须另获授权。
+
+**AUTH-F3 已通过人工 Chrome 验收（PASS）。** 页面 B 的房屋列表标题旁仅向 ADMIN 显示 `+ Add house` 入口，并连接独立的页面 D `/houses/new`。页面 C 的 Photo history 末尾仅向 ADMIN 或所属社区严格匹配的 SITE_MANAGER 显示禁用的 `Upload photo · Coming soon` 卡片；无照片时也保留此卡片，VIEWER 始终只读。照片较多时可直达列表末尾的上传卡片；Site Manager 可在详情中核对当前所属区域与房屋区域。入口显示只是前端提示，后端仍负责真实授权。第 6 组将启用受保护原图与单张上传，第 7 组实现封面读取及设置，第 8 组实现施工阶段推进；这些业务尚未在前端实现。
 
 ### 业务组与前端开发顺序
 
@@ -112,7 +116,7 @@ Construction Tracker 是面向美国在建住宅管理的地图可视化 Web 应
 
 | 原有业务组及后端范围 | 对应前端目标、当前进度与后续子阶段 |
 | --- | --- |
-| **第 4 步：实现房屋接口**。4.1 `POST /api/houses` 创建及许可证幂等；4.2 `GET /api/houses` 地图范围／阶段筛选；4.3 `GET /api/houses/{id}` 详情；4.4 集成验收。 | **前端第 4 组范围仅为查询与展示**：1.3-A／B 已完成真实标记、卡片、选择联动及列表摘要。**4-F1（人工 Chrome 验收 PASS）** 已完成地图初始／移动结束范围查询、单阶段筛选、旧请求取消与过期响应隔离；地图辅助控件已增加离开后延迟淡出。**4-F2（人工 Chrome 验收 PASS）** 页面 C `/houses/:id` 独立请求详情，展示基础资料、来源和时间字段，支持直接访问、刷新、返回地图及错误重试；当前封面使用明确占位，Photo history 按真实照片元数据展示并可横向滚动、打开占位大图。尚不读取受保护原图。原后端 4.1 创建接口仍已实现；其前端表单移至后续待规划范围，不作为本组完成条件。 |
+| **第 4 步：实现房屋接口**。4.1 `POST /api/houses` 创建及许可证幂等；4.2 `GET /api/houses` 地图范围／阶段筛选；4.3 `GET /api/houses/{id}` 详情；4.4 集成验收。 | **前端第 4 组范围仅为查询与展示**：1.3-A／B 已完成真实标记、卡片、选择联动及列表摘要。**4-F1（人工 Chrome 验收 PASS）** 已完成地图初始／移动结束范围查询、单阶段筛选、旧请求取消与过期响应隔离；地图辅助控件已增加离开后延迟淡出。**4-F2（人工 Chrome 验收 PASS）** 页面 C `/houses/:id` 独立请求详情，展示基础资料、来源和时间字段，支持直接访问、刷新、返回地图及错误重试；当前封面使用明确占位，Photo history 按真实照片元数据展示并可横向滚动、打开占位大图。尚不读取受保护原图。原后端 4.1 创建接口仍已实现；其前端页面 D 在第 4 组验收后单独开发并通过人工验收，不追溯改写本组完成条件。 |
 | **第 5 步：实现数据导入**。5.1 Austin 真实许可数据采集清洗；5.2 经 `POST /api/houses` 幂等导入及核对。 | **展示基础已具备**：页面 B 已能浏览导入的真实房屋。后续 **5-F1** 在房屋资料中准确标示可用的来源信息与 `Austin Council District N` 分组含义，并核对缺失坐标记录；不在浏览器重复实现采集／批量导入脚本，也不把 Council District 称作具体住宅小区。若需前端导入工作流，先单独确认需求与接口。 |
 | **第 6 步：实现照片上传**。6.1 内容类型、10 MB、安全存储与受保护文件读取；6.2 EXIF／GPS、Chicago 业务日；6.3 并发去重；6.4 文件与数据库一致性验收。核心 API 为 `POST /api/houses/{id}/photos`，现有受身份头保护的文件 GET 是实际实现的辅助接口。 | **仅元数据浏览已接入**：4-F2 的 Photo history 使用详情响应中的真实照片元数据与占位图片。后续 **6-F1** 在现有详情的 Photo history 中读取受保护原图，统一身份头、加载／错误状态、请求取消与 Blob URL 释放；**6-F2** 按角色与社区权限提供单张上传，展示新建 201／重复 200、格式与大小错误、EXIF/GPS 状态和业务日；失败或竞态时保持资料与文件展示一致。不新增批量上传或缩略图服务。 |
 | **第 7 步：实现封面与详情**。`PUT /api/houses/{id}/cover` 校验照片归属；`GET /api/houses` 联动 `coverPhotoUrl`、`lastPhotoBusinessDate`；详情照片排序沿用既有房屋接口。 | **部分完成**：1.3-B 已正确展示最近照片业务日期，但卡片仍无真实封面。后续 **7-F1** 复用 6-F1 的鉴权图片能力，将真实封面用于卡片与所选房屋，处理无封面、身份变化和旧请求；**7-F2** 在详情已有照片中按权限设置封面，核对照片归属、重复设置及 401／403／404／422，更新同一房屋的详情、卡片与标记关联数据。 |
@@ -129,7 +133,7 @@ Construction Tracker 是面向美国在建住宅管理的地图可视化 Web 应
 
 ### 后续范围与地图服务边界
 
-房屋创建表单（对接现有 `POST /api/houses`）、正式登录方案、城市／ZIP Code 地理编码、关键词搜索与完整移动端适配均待单独规划和授权。当前后端没有地理编码、关键词搜索、分页或社区筛选接口；不得将任意输入解释为坐标、展示虚构搜索结果或擅自接入第三方服务。发现现有 API 能力缺口时先报告使用场景与影响，等待人工决定，不擅改后端契约。
+**页面 D 已通过人工 Chrome 验收（PASS）。** ADMIN 可从页面 B 的 `Add house` 进入 `/houses/new`，手动填写许可证编号、地址、社区及可选的成对经纬度；可选的来源 URL 与获取时间也须成对提供。提交经现有 `POST /api/houses`：HTTP 201 按新房屋 ID 直接进入页面 C；许可证号已存在时，后端返回 HTTP 200，页面 D 保留表单并提示没有新建房屋，可选择查看响应 ID 对应的已有房屋或留在表单。非 ADMIN 直接访问时显示无权限状态。页面 D 不负责照片上传，也不进行地理编码或 GPS 认证。正式登录方案、城市／ZIP Code 地理编码、关键词搜索与完整移动端适配仍待单独规划和授权。当前后端没有地理编码、关键词搜索、分页或社区筛选接口；不得将任意输入解释为坐标、展示虚构搜索结果或擅自接入第三方服务。发现现有 API 能力缺口时先报告使用场景与影响，等待人工决定，不擅改后端契约。
 
 [Leaflet](https://leafletjs.com/) 是 JavaScript 地图库，[OpenStreetMap](https://www.openstreetmap.org/)（OSM）是开放地图数据项目；React Leaflet 用于 React 与 Leaflet 的集成。采用 OSM 不代表城市或 ZIP Code 搜索已实现。OSM 官方公共瓦片服务有[使用政策与资源限制](https://operations.osmfoundation.org/policies/tiles/)，不能视为无限免费商用地图服务；地图须保留清晰可见的 [OpenStreetMap 署名](https://www.openstreetmap.org/copyright)。正式部署前按流量和服务要求评估瓦片服务提供商；自动化地图测试使用本地模拟瓦片。
 

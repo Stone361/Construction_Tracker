@@ -1,4 +1,5 @@
 import { ApiError, getJson } from './apiClient'
+import type { DemoIdentity } from '../app/DemoIdentityContext'
 import type { ConstructionStage } from './houses'
 import { constructionStages } from './houses'
 
@@ -100,8 +101,8 @@ export function parseHouseDetail(value: unknown, expectedId: number): HouseDetai
   }
 }
 
-export async function getHouseDetail(id: number, signal?: AbortSignal): Promise<HouseDetail> {
-  return parseHouseDetail(await getJson(`/api/houses/${id}`, signal), id)
+export async function getHouseDetail(id: number, signal: AbortSignal | undefined, identity: DemoIdentity): Promise<HouseDetail> {
+  return parseHouseDetail(await getJson(`/api/houses/${id}`, signal, identity), id)
 }
 
 export function displayUtcInstant(value: string | null): string {

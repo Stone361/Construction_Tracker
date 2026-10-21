@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { demoIdentity } from './apiClient'
+import { viewerIdentity } from '../app/DemoIdentityContext'
 import { displayChicagoBusinessDate, displayUtcInstant, getHouseDetail, parseHouseDetail } from './houseDetail'
 
 export const detailFixture = {
@@ -17,15 +17,16 @@ describe('house detail API', () => {
   it('requests the detail path with the existing simulated identity and maps the detail DTO', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(detailFixture), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
-    expect(await getHouseDetail(12)).toMatchObject({
+    expect(await getHouseDetail(12, undefined, viewerIdentity)).toMatchObject({
       id: 12, address: '12 Main St', sourceType: 'PUBLIC_DATA', createdBy: 'importer',
       sourceFetchedAt: '2026-01-01T00:00:00.000Z',
     })
     const [path, options] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(path).toBe('/api/houses/12')
     expect(options.headers).toMatchObject({
-      'X-User': demoIdentity.user, 'X-Role': demoIdentity.role, 'X-Community': demoIdentity.community,
+      'X-User': viewerIdentity.user, 'X-Role': viewerIdentity.role,
     })
+    expect(options.headers).not.toHaveProperty('X-Community')
   })
 
   it('keeps optional fields honest and formats UTC instants separately from Chicago business dates', () => {
@@ -65,7 +66,7 @@ describe('house detail API', () => {
       .mockResolvedValueOnce(new Response(null, { status: 401 }))
       .mockResolvedValueOnce(new Response(null, { status: 404 }))
     vi.stubGlobal('fetch', fetchMock)
-    await expect(getHouseDetail(12)).rejects.toMatchObject({ status: 401 })
-    await expect(getHouseDetail(12)).rejects.toMatchObject({ status: 404 })
+    await expect(getHouseDetail(12, undefined, viewerIdentity)).rejects.toMatchObject({ status: 401 })
+    await expect(getHouseDetail(12, undefined, viewerIdentity)).rejects.toMatchObject({ status: 404 })
   })
 })

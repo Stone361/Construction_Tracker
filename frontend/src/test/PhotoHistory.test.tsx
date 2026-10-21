@@ -21,6 +21,28 @@ describe('photo history placeholders and interactions', () => {
     expect(screen.queryByRole('button', { name: /Scroll photos/ })).not.toBeInTheDocument()
   })
 
+  it('places a disabled upload card after real photos without adding it to the lightbox', async () => {
+    const user = userEvent.setup()
+    render(<PhotoHistory photos={photos} canUpload />)
+    const rail = screen.getByRole('list', { name: 'House photo history' })
+    const cards = within(rail).getAllByRole('listitem')
+    expect(cards).toHaveLength(3)
+    expect(within(cards[2]!).getByRole('button', { name: 'Upload photo coming soon' })).toBeDisabled()
+    await user.click(within(cards[2]!).getByRole('button', { name: 'Upload photo coming soon' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Preview photo 1' }))
+    expect(screen.getByRole('dialog', { name: 'Photo 1 of 2' })).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+  })
+
+  it('shows the upload card even with no photos, while preserving the empty message', () => {
+    render(<PhotoHistory photos={[]} canUpload />)
+    expect(screen.getByText('No site photos yet.')).toBeInTheDocument()
+    expect(screen.getByRole('list', { name: 'House photo history' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Upload photo coming soon' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: /Preview photo/ })).not.toBeInTheDocument()
+  })
+
   it('keeps real metadata distinct from the placeholder, previews the selected photo, and restores focus', async () => {
     const user = userEvent.setup()
     const root = document.createElement('div')
@@ -76,5 +98,19 @@ describe('photo history placeholders and interactions', () => {
     expect(screen.getByRole('button', { name: 'Scroll photos right' })).toBeDisabled()
     await user.click(screen.getByRole('button', { name: 'Scroll photos left' }))
     expect(scrollBy).toHaveBeenCalledWith({ left: -240, behavior: 'smooth' })
+  })
+
+  it('offers a direct way to find an authorized upload card beyond the visible photos', async () => {
+    const user = userEvent.setup()
+    render(<PhotoHistory photos={photos} canUpload />)
+    const rail = screen.getByRole('list', { name: 'House photo history' })
+    Object.defineProperty(rail, 'clientWidth', { configurable: true, value: 300 })
+    Object.defineProperty(rail, 'scrollWidth', { configurable: true, value: 900 })
+    const scrollTo = vi.fn()
+    rail.scrollTo = scrollTo
+    act(() => window.dispatchEvent(new Event('resize')))
+    await user.click(screen.getByRole('button', { name: 'Upload card at end →' }))
+    expect(scrollTo).toHaveBeenCalledWith({ left: 900, behavior: 'smooth' })
+    expect(within(rail).getAllByRole('listitem').at(-1)).toHaveTextContent('Upload photo')
   })
 })

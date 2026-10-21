@@ -66,7 +66,8 @@ describe('application routes', () => {
     })
     renderRoute('/houses/12')
     expect(await screen.findByRole('heading', { level: 1, name: '12 Main St' })).toBeInTheDocument()
-    expect(getHouseDetail).toHaveBeenCalledWith(12, expect.any(AbortSignal))
+    expect(getHouseDetail).toHaveBeenCalledWith(12, expect.any(AbortSignal),
+      { user: 'frontend-demo', role: 'VIEWER', community: null })
   })
 
   it('shows an unknown route and returns to the landing page', async () => {

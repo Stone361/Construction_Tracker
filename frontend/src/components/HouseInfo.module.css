@@ -1,7 +1,5 @@
 .detail { padding: 1.25rem clamp(1.5rem, 3vw, 2.5rem) 2rem; }
-.back { display: inline-flex; align-items: center; gap: .4rem; padding: .35rem 0; border: 0; background: transparent; color: var(--color-accent); font-size: .76rem; font-weight: 650; cursor: pointer; }
-.back:hover { text-decoration: underline; }
-.intro { margin: 1.5rem 0 1.8rem; }
+.intro { margin: 0 0 1.8rem; }
 .eyebrow { margin: 0 0 .5rem; color: var(--color-muted); font-size: .6rem; font-weight: 700; letter-spacing: .15em; }
 .intro h3 { margin: 0; overflow-wrap: anywhere; font-size: 1.35rem; font-weight: 650; line-height: 1.25; letter-spacing: -.035em; }
 .intro > p:last-child { margin: .5rem 0 0; color: var(--color-muted); font-size: .85rem; }

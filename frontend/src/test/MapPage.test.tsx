@@ -1,10 +1,13 @@
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Link, MemoryRouter, Route, Routes, useLocation, useNavigate, useParams } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { MapPage } from '../pages/MapPage'
+import { DemoIdentityProvider } from '../app/DemoIdentityProvider'
+import { useDemoIdentity } from '../app/DemoIdentityContext'
+import { ApiError } from '../services/apiClient'
 import { getHouses } from '../services/houses'
 import type { HouseSummary } from '../services/houses'
 import { mapSnapshotFromState } from '../services/mapNavigation'
@@ -53,9 +56,100 @@ function renderMap() {
   return render(<MemoryRouter><MapPage /></MemoryRouter>)
 }
 
-beforeEach(() => vi.mocked(getHouses).mockReset())
+function IdentitySwitch() {
+  const { selectRole } = useDemoIdentity()
+  return <button type="button" onClick={() => selectRole('ADMIN')}>Use Admin</button>
+}
+
+function IdentityCycle() {
+  const { selectRole, selectSiteManager } = useDemoIdentity()
+  return <>
+    <button type="button" onClick={() => selectRole('ADMIN')}>Use Admin</button>
+    <button type="button" onClick={() => selectSiteManager('Austin Council District 8')}>Use Site Manager</button>
+    <button type="button" onClick={() => selectRole('VIEWER')}>Use Viewer</button>
+  </>
+}
+
+beforeEach(() => {
+  sessionStorage.clear()
+  vi.mocked(getHouses).mockReset()
+})
 
 describe('map house data and selection', () => {
+  it('links Admin to the independent create route and hides it from other roles', async () => {
+    vi.mocked(getHouses).mockResolvedValue([])
+    const user = userEvent.setup()
+    render(<DemoIdentityProvider><MemoryRouter><IdentityCycle /><MapPage /></MemoryRouter></DemoIdentityProvider>)
+    expect(screen.queryByRole('link', { name: /Add house/ })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Use Admin' }))
+    expect(screen.getByRole('link', { name: 'Add house' })).toHaveAttribute('href', '/houses/new')
+    await user.click(screen.getByRole('button', { name: 'Use Site Manager' }))
+    expect(screen.queryByRole('link', { name: /Add house/ })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Use Viewer' }))
+    expect(screen.queryByRole('link', { name: /Add house/ })).not.toBeInTheDocument()
+  })
+  it('requeries under a new identity and ignores the old identity response', async () => {
+    let resolveOld!: (value: HouseSummary[]) => void
+    vi.mocked(getHouses).mockReturnValueOnce(new Promise(done => { resolveOld = done }))
+      .mockResolvedValueOnce([house(2)])
+    const user = userEvent.setup()
+    render(<DemoIdentityProvider><MemoryRouter><IdentitySwitch /><MapPage /></MemoryRouter></DemoIdentityProvider>)
+    await screen.findByText('Loading houses from the backend…')
+    await user.click(screen.getByRole('button', { name: 'Use Admin' }))
+    expect(await screen.findByText('2 Main St')).toBeInTheDocument()
+    resolveOld([house(1)])
+    expect(screen.queryByText('1 Main St')).not.toBeInTheDocument()
+    expect(vi.mocked(getHouses).mock.calls[0]?.[1]?.aborted).toBe(true)
+    expect(vi.mocked(getHouses).mock.calls[1]?.[2]?.role).toBe('ADMIN')
+  })
+
+  it('shows an authorization failure after switching instead of old house data', async () => {
+    vi.mocked(getHouses).mockResolvedValueOnce([house(1)])
+      .mockRejectedValueOnce(new ApiError('Access denied (HTTP 403).', 403))
+    const user = userEvent.setup()
+    render(<DemoIdentityProvider><MemoryRouter><IdentitySwitch /><MapPage /></MemoryRouter></DemoIdentityProvider>)
+    expect(await screen.findByText('1 Main St')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Use Admin' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('HTTP 403')
+    expect(screen.queryByText('1 Main St')).not.toBeInTheDocument()
+  })
+
+  it('clears a selected house absent from the new identity result', async () => {
+    vi.mocked(getHouses).mockResolvedValueOnce([house(1)]).mockResolvedValueOnce([house(2)])
+    const user = userEvent.setup()
+    render(<DemoIdentityProvider><MemoryRouter><IdentitySwitch /><MapPage /></MemoryRouter></DemoIdentityProvider>)
+    await user.click(await screen.findByRole('button', { name: 'View 1 Main St' }))
+    expect(screen.getByRole('heading', { name: '1 Main St' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Use Admin' }))
+    expect(await screen.findByRole('button', { name: 'View 2 Main St' })).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: '1 Main St' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Back to list' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Map marker for house 1' })).not.toBeInTheDocument()
+  })
+
+  it('ends on the last identity after rapid Viewer, Admin, Site Manager, Viewer changes', async () => {
+    const oldResolvers: Array<(value: HouseSummary[]) => void> = []
+    vi.mocked(getHouses).mockImplementationOnce(() => new Promise(done => { oldResolvers.push(done) }))
+      .mockImplementationOnce(() => new Promise(done => { oldResolvers.push(done) }))
+      .mockImplementationOnce(() => new Promise(done => { oldResolvers.push(done) }))
+      .mockResolvedValueOnce([house(4, { address: 'Latest Viewer house' })])
+    const user = userEvent.setup()
+    render(<DemoIdentityProvider><MemoryRouter><IdentityCycle /><MapPage /></MemoryRouter></DemoIdentityProvider>)
+    await waitFor(() => expect(getHouses).toHaveBeenCalledTimes(1))
+    await user.click(screen.getByRole('button', { name: 'Use Admin' }))
+    await waitFor(() => expect(getHouses).toHaveBeenCalledTimes(2))
+    await user.click(screen.getByRole('button', { name: 'Use Site Manager' }))
+    await waitFor(() => expect(getHouses).toHaveBeenCalledTimes(3))
+    await user.click(screen.getByRole('button', { name: 'Use Viewer' }))
+    expect(await screen.findByRole('button', { name: 'View Latest Viewer house' })).toBeInTheDocument()
+    oldResolvers.forEach(resolve => resolve([house(1, { address: 'Stale house' })]))
+    expect(screen.queryByRole('button', { name: 'View Stale house' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(vi.mocked(getHouses).mock.calls.map(call => call[2]?.role))
+      .toEqual(['VIEWER', 'ADMIN', 'SITE_MANAGER', 'VIEWER'])
+    expect(vi.mocked(getHouses).mock.calls[2]?.[2]?.community).toBe('Austin Council District 8')
+    expect(vi.mocked(getHouses).mock.calls.slice(0, 3).every(call => call[1]?.aborted)).toBe(true)
+  })
   it('shows loading, sorted real cards, counts, and no duplicate fetch on selection', async () => {
     let resolve!: (value: Awaited<ReturnType<typeof getHouses>>) => void
     vi.mocked(getHouses).mockReturnValue(new Promise(done => { resolve = done }))
@@ -79,9 +173,18 @@ describe('map house data and selection', () => {
     expect(screen.getByRole('heading', { name: '2 Main St' })).toBeInTheDocument()
     expect(screen.getByTestId('map-focus')).toHaveTextContent('30.02,-97')
     expect(screen.getByRole('button', { name: 'Map marker for house 2' })).toHaveAttribute('data-selected', 'true')
-    await user.click(screen.getByRole('button', { name: 'Back to list' }))
+    const back = screen.getByRole('button', { name: 'Back to list' })
+    const header = back.closest('header')
+    expect(header).not.toBeNull()
+    expect(header?.firstElementChild).toBe(back)
+    expect(header).toContainElement(screen.getByText('MAP WORKSPACE'))
+    expect(header?.parentElement?.lastElementChild).toContainElement(screen.getByRole('heading', { name: '2 Main St' }))
+    await user.click(back)
     expect(screen.getByRole('list', { name: 'Houses sorted by latest photo business date' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Back to list' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Map marker for house 2' })).toHaveAttribute('data-selected', 'false')
+    expect(screen.getByLabelText('Construction stage')).toHaveValue('')
+    expect(screen.getByTestId('map-focus')).toHaveTextContent('none')
     expect(getHouses).toHaveBeenCalledOnce()
   })
 

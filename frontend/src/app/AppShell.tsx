@@ -1,4 +1,5 @@
 import { Link, NavLink, Outlet } from 'react-router'
+import { DemoIdentitySelector } from './DemoIdentitySelector'
 import styles from './AppShell.module.css'
 
 export function AppShell() {
@@ -14,7 +15,7 @@ export function AppShell() {
           <NavLink to="/" end className={({ isActive }) => isActive ? styles.active : undefined}>Overview</NavLink>
           <NavLink to="/map" className={({ isActive }) => isActive ? styles.active : undefined}>Explore map</NavLink>
         </nav>
-        <div className={styles.area}><span aria-hidden="true" />Austin, Texas</div>
+        <DemoIdentitySelector />
       </header>
       <main className={styles.main} id="main-content" tabIndex={-1}><Outlet /></main>
     </div>

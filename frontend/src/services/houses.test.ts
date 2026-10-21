@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { demoIdentity } from './apiClient'
-import { displayPhotoDate, getHouses, hasValidLocation, houseListPath, parseHouseList, sortHousesByPhotoDate, stageLabel } from './houses'
+import { viewerIdentity } from '../app/DemoIdentityContext'
+import { displayPhotoDate, getCommunityNames, getHouses, hasValidLocation, houseListPath, parseHouseList, sortHousesByPhotoDate, stageLabel } from './houses'
 import type { HouseQuery } from './houses'
 
 const query: HouseQuery = {
@@ -18,17 +18,17 @@ describe('house list API', () => {
     ]), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
 
-    expect(await getHouses(query)).toEqual([{ id: 11, address: '101 Main St', permitNo: 'P-11',
+    expect(await getHouses(query, undefined, viewerIdentity)).toEqual([{ id: 11, address: '101 Main St', permitNo: 'P-11',
       community: 'Austin Council District 8', lat: 30.2672, lng: -97.7431,
       stage: 'FOUNDATION', lastPhotoBusinessDate: '2026-10-20' }])
     expect(fetchMock).toHaveBeenCalledOnce()
     const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(url).toBe('/api/houses?minLat=30.1&maxLat=30.5&minLng=-97.9&maxLng=-97.5')
     expect(options.headers).toMatchObject({
-      'X-User': demoIdentity.user,
-      'X-Role': demoIdentity.role,
-      'X-Community': demoIdentity.community,
+      'X-User': viewerIdentity.user,
+      'X-Role': viewerIdentity.role,
     })
+    expect(options.headers).not.toHaveProperty('X-Community')
   })
 
   it('combines four independent bounds with one stage and never sends bbox', () => {
@@ -81,6 +81,31 @@ describe('house list API', () => {
 
   it('reports HTTP authorization errors without treating them as empty data', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 403 })))
-    await expect(getHouses(query)).rejects.toMatchObject({ status: 403, message: expect.stringMatching(/HTTP 403/) })
+    await expect(getHouses(query, undefined, viewerIdentity)).rejects.toMatchObject({ status: 403, message: expect.stringMatching(/HTTP 403/) })
+  })
+
+  it('derives exact unique community names from the real unbounded list under the current identity', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify([
+      { id: 1, community: 'Austin Council District 8' },
+      { id: 2, community: 'Austin Council District 5' },
+      { id: 3, community: 'Austin Council District 8' },
+      { id: 4, community: null },
+    ]), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await getCommunityNames(viewerIdentity)).toEqual(['Austin Council District 5', 'Austin Council District 8'])
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/houses')
+    expect(fetchMock.mock.calls[0]?.[1].headers).toMatchObject({ 'X-Role': 'VIEWER' })
+  })
+
+  it('sends manager community only for Site Manager, with no stale community after returning to Viewer', async () => {
+    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(new Response('[]', { status: 200 })))
+    vi.stubGlobal('fetch', fetchMock)
+    const manager = { user: 'frontend-demo', role: 'SITE_MANAGER' as const, community: 'Austin Council District 8' }
+    await getHouses(query, undefined, manager)
+    await getHouses(query, undefined, viewerIdentity)
+    expect(fetchMock.mock.calls[0]?.[1].headers).toMatchObject({
+      'X-User': 'frontend-demo', 'X-Role': 'SITE_MANAGER', 'X-Community': 'Austin Council District 8',
+    })
+    expect(fetchMock.mock.calls[1]?.[1].headers).not.toHaveProperty('X-Community')
   })
 })
