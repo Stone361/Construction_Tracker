@@ -14,14 +14,42 @@
 .item { flex: 0 0 clamp(14rem, 28%, 18rem); scroll-snap-align: start; }
 .photoCard { display: flex; flex-direction: column; width: 100%; height: 100%; padding: .55rem; border: 1px solid var(--color-border); border-radius: .75rem; background: #fff; color: var(--color-text); text-align: left; cursor: pointer; }
 .photoCard:hover { border-color: #9cb9a5; box-shadow: 0 5px 18px rgb(25 50 36 / 8%); }
-.uploadCard { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .55rem; width: 100%; height: 100%; min-height: 13.5rem; padding: 1rem; border: 1px dashed #a9bfae; border-radius: .75rem; background: #f4f8f4; color: var(--color-accent); font: inherit; text-align: center; cursor: not-allowed; }
-.uploadCard strong { font-size: .84rem; }
-.uploadCard > span:last-child { color: var(--color-muted); font-size: .72rem; }
+.uploadCard { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .55rem; width: 100%; height: 100%; min-height: 13.5rem; padding: 1rem; border: 1px dashed #a9bfae; border-radius: .75rem; background: #f4f8f4; color: var(--color-accent); font: inherit; text-align: center; }
+.uploadCardDragging { border-color: var(--color-accent); background: #e6f1e8; }
+.fileInput { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.uploadChoose { display: flex; flex-direction: column; align-items: center; gap: .55rem; width: 100%; padding: 1rem .5rem; border: 0; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.uploadChoose:hover { color: #254d30; }
+.uploadChoose:focus-visible, .uploadActions button:focus-visible, .uploadError button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.uploadChoose strong { font-size: .84rem; }
+.uploadChoose > span:last-child { color: var(--color-muted); font-size: .72rem; }
+.uploadPreview { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: contain; border-radius: .5rem; background: #e5eee4; }
+.uploadFilename { max-width: 100%; overflow-wrap: anywhere; color: var(--color-text); font-size: .76rem; }
+.uploadCard > span { color: var(--color-muted); font-size: .7rem; }
+.uploadActions { display: flex; flex-wrap: wrap; justify-content: center; gap: .45rem; }
+.uploadActions button, .uploadError button { padding: .5rem .7rem; border: 1px solid var(--color-border); border-radius: var(--radius-small); background: white; color: var(--color-accent); font: inherit; font-size: .7rem; font-weight: 700; cursor: pointer; }
+.uploadActions button:first-child { background: var(--color-accent); color: white; }
+.uploadActions button:disabled { opacity: .55; cursor: default; }
+.uploadProgress { display: grid; gap: .3rem; width: 100%; color: var(--color-text); font-size: .72rem; }
+.uploadProgress progress { width: 100%; accent-color: var(--color-accent); }
+.uploadError { width: 100%; color: #914b36; font-size: .72rem; }
+.uploadError p { margin: .2rem 0 .5rem; }
+.uploadResultBackdrop { position: fixed; inset: 0; z-index: 4000; display: grid; place-items: center; padding: 1rem; background: rgb(14 31 21 / 68%); }
+.uploadResultDialog { width: min(100%, 28rem); padding: clamp(1.4rem, 3vw, 2rem); border: 1px solid var(--color-border); border-radius: var(--radius-large); background: var(--color-surface); color: var(--color-text); text-align: left; box-shadow: 0 1.5rem 5rem rgb(0 0 0 / 25%); }
+.uploadResultEyebrow { margin: 0 0 .6rem; color: var(--color-accent); font-size: .65rem; font-weight: 750; letter-spacing: .12em; }
+.uploadResultDialog h2 { margin: 0 0 .75rem; font-size: 1.25rem; }
+.uploadResultDialog p:not(.uploadResultEyebrow) { margin: 0 0 1.35rem; color: var(--color-muted); font-size: .85rem; line-height: 1.6; }
+.uploadResultDialog button { padding: .65rem .9rem; border: 0; border-radius: var(--radius-small); background: var(--color-accent); color: white; font: inherit; font-size: .8rem; font-weight: 700; cursor: pointer; }
+.uploadResultDialog button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 3px; }
 .uploadPlus { display: grid; place-items: center; width: 2.7rem; height: 2.7rem; border: 1px solid #bdd0c0; border-radius: .65rem; font-size: 1.5rem; line-height: 1; }
-.placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .65rem; width: 100%; aspect-ratio: 16 / 9; border-radius: .5rem; background: linear-gradient(145deg, #e5eee4, #d6e4da); color: #456451; font-size: .7rem; font-weight: 700; letter-spacing: .02em; }
-.placeholderMark { display: grid; place-items: center; width: 2.5rem; height: 2.5rem; border: 1px solid #a4bdaa; border-radius: .65rem; color: var(--color-accent); font-size: .75rem; }
-.placeholderLarge { max-height: min(56vh, 42rem); min-height: 12rem; aspect-ratio: 16 / 9; font-size: .9rem; }
-.placeholderLarge .placeholderMark { width: 4rem; height: 4rem; font-size: 1.2rem; }
+.photoImage, .photoFallback { width: 100%; aspect-ratio: 16 / 9; border-radius: .5rem; background: #e5eee4; }
+.photoImage { display: block; object-fit: cover; }
+.photoFallback { display: grid; place-items: center; padding: 1rem; color: #456451; font-size: .72rem; text-align: center; }
+.photoFallback[role='alert'] { color: #914b36; background: #f9ece7; }
+.photoLarge, .photoFallbackLarge { display: block; width: 100%; max-height: min(56vh, 42rem); min-height: 12rem; border-radius: .5rem; background: #e5eee4; }
+.photoLarge { object-fit: contain; }
+.photoFallbackLarge { display: grid; place-items: center; font-size: .9rem; }
+.retry { margin-top: .5rem; padding: .45rem .65rem; border: 1px solid var(--color-border); border-radius: var(--radius-small); background: white; color: var(--color-accent); font: inherit; font-size: .72rem; font-weight: 700; cursor: pointer; }
+.retry:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .photoDetails { display: block; padding: .8rem .3rem .4rem; }
 .photoNumber { display: block; margin-bottom: .7rem; font-size: .78rem; font-weight: 750; }
 .facts { display: grid; gap: .45rem; margin: 0; }

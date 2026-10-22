@@ -61,6 +61,14 @@ describe('house detail API', () => {
       .toThrow(/invalid photo record/)
   })
 
+  it('does not use an external or mismatched photo URL from the detail response', () => {
+    const parsed = parseHouseDetail({ ...detailFixture, photos: [
+      { id: 8, houseId: 12, url: 'https://example.org/photo.png' },
+      { id: 9, houseId: 12, url: '/api/houses/13/photos/9/file' },
+    ] }, 12)
+    expect(parsed.photos.map(photo => photo.url)).toEqual([null, null])
+  })
+
   it('preserves distinct 401 and 404 failures', async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(null, { status: 401 }))

@@ -3,6 +3,7 @@ import { useDemoIdentity } from '../app/DemoIdentityContext'
 import { Link, useLocation, useParams } from 'react-router'
 import { ApiError } from '../services/apiClient'
 import { PhotoHistory } from '../components/PhotoHistory'
+import type { UploadOutcome } from '../components/PhotoUploadCard'
 import { displayChicagoBusinessDate, displayUtcInstant, getHouseDetail } from '../services/houseDetail'
 import type { HouseDetail } from '../services/houseDetail'
 import { stageLabel } from '../services/houses'
@@ -37,9 +38,11 @@ export function HouseDetailPage({ savedSnapshot = null }: { savedSnapshot?: MapS
   const backState = snapshot ? { mapSnapshot: snapshot } : undefined
   const id = rawId && /^[1-9]\d*$/.test(rawId) && Number.isSafeInteger(Number(rawId)) ? Number(rawId) : null
   const [retry, setRetry] = useState(0)
+  const [photoRefreshError, setPhotoRefreshError] = useState<{ key: string; message: string } | null>(null)
   const [result, setResult] = useState<{ key: string; state: DetailState } | null>(null)
   const key = id === null ? 'invalid' : `${version}:${id}:${retry}`
   const latestKey = useRef(key)
+  const refreshController = useRef<AbortController | null>(null)
 
   useLayoutEffect(() => {
     latestKey.current = key
@@ -62,17 +65,45 @@ export function HouseDetailPage({ savedSnapshot = null }: { savedSnapshot?: MapS
         setResult({ key, state: { kind: 'error', message } })
       },
     )
-    return () => controller.abort()
+    return () => {
+      controller.abort()
+      refreshController.current?.abort()
+      refreshController.current = null
+    }
   }, [id, key, identity])
 
   const state: DetailState = result?.key === key ? result.state : { kind: 'loading' }
+  const refreshPhotoHistory = () => {
+    if (id === null || latestKey.current !== key) return
+    refreshController.current?.abort()
+    const controller = new AbortController()
+    refreshController.current = controller
+    setPhotoRefreshError(null)
+    getHouseDetail(id, controller.signal, identity).then(
+      house => {
+        if (!controller.signal.aborted && latestKey.current === key) {
+          setResult({ key, state: { kind: 'ready', house } })
+        }
+      },
+      error => {
+        if (controller.signal.aborted || latestKey.current !== key) return
+        const reason = error instanceof Error ? error.message : 'The backend could not be reached.'
+        setPhotoRefreshError({ key, message: `Photo history could not be refreshed. ${reason}` })
+      },
+    ).finally(() => {
+      if (refreshController.current === controller) refreshController.current = null
+    })
+  }
+  const uploadComplete = (outcome: UploadOutcome) => {
+    if (outcome.status === 201 || outcome.status === 200) refreshPhotoHistory()
+  }
 
   return (
     <div className={styles.page}>
       <div className={styles.inner}>
         <Link className={styles.back} to="/map" state={backState} aria-label="Back to map">← Back to map</Link>
         <div className={styles.heading}>
-          <p className={styles.eyebrow}>HOUSE DETAILS · READ ONLY</p>
+          <p className={styles.eyebrow}>HOUSE DETAILS</p>
           <h1>{state.kind === 'ready' ? state.house.address ?? 'Address unavailable' : 'House information'}</h1>
           <p>Property record and permit source details.</p>
         </div>
@@ -97,7 +128,7 @@ export function HouseDetailPage({ savedSnapshot = null }: { savedSnapshot?: MapS
                 <h2 id="cover-heading">Current cover</h2>
                 <p>{state.house.coverPhotoId === null
                   ? 'No cover selected. The image area is a placeholder.'
-                  : `Cover photo #${state.house.coverPhotoId} selected. Image placeholder shown until protected viewing is available.`}</p>
+                  : `Cover photo #${state.house.coverPhotoId} selected. Cover preview is planned for a later stage.`}</p>
               </div>
             </section>
             <div className={styles.sections}>
@@ -133,8 +164,13 @@ export function HouseDetailPage({ savedSnapshot = null }: { savedSnapshot?: MapS
               </dl>
             </section>
             </div>
-            <PhotoHistory key={`${version}:${state.house.id}`} photos={state.house.photos}
-              canUpload={canManageHouse(identity, state.house.community)} />
+            {photoRefreshError?.key === key && <div className={styles.message} role="alert">
+              <p>{photoRefreshError.message}</p>
+              <button type="button" onClick={refreshPhotoHistory}>Retry photo history</button>
+            </div>}
+            <PhotoHistory key={`${version}:${state.house.id}`} houseId={state.house.id} photos={state.house.photos}
+              canUpload={canManageHouse(identity, state.house.community)}
+              onUploadComplete={uploadComplete} onRefreshDetails={refreshPhotoHistory} />
           </div>
         )}
       </div>

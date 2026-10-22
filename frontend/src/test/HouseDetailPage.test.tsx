@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -59,31 +59,121 @@ beforeEach(() => {
   sessionStorage.clear()
   vi.mocked(getHouseDetail).mockReset()
 })
-afterEach(() => vi.clearAllMocks())
+afterEach(() => { vi.clearAllMocks(); vi.unstubAllGlobals() })
 
 describe('house detail page', () => {
+  it.each([{ status: 201, stale: false }, { status: 200, stale: false }, { status: 200, stale: true }] as const)(
+    'shows HTTP $status outcome and reconciles photo history (stale: $stale)', async ({ status, stale }) => {
+    sessionStorage.setItem(identityStorageKey, JSON.stringify({ version: identityStorageVersion,
+      identity: { user: 'frontend-demo', role: 'ADMIN', community: null } }))
+    URL.createObjectURL = vi.fn(() => 'blob:local-preview')
+    URL.revokeObjectURL = vi.fn()
+    const uploaded = { id: 91, stage: 'FOUNDATION' as const, locationStatus: 'SUSPECT' as const,
+      takenAt: '2026-01-01T00:00:00Z', uploadedAt: '2026-10-21T00:00:00Z',
+      businessDate: '2025-12-31', url: null }
+    const initialHouse = status === 200 && !stale ? { ...house, photos: [uploaded] } : house
+    vi.mocked(getHouseDetail).mockResolvedValueOnce(initialHouse)
+      .mockResolvedValueOnce({ ...house, address: '12 Main St (refreshed)', photos: [uploaded] })
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 91, houseId: 12,
+      locationStatus: 'SUSPECT', stage: 'FOUNDATION' }), { status,
+      headers: { 'Content-Type': 'application/json' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    renderDetailWithIdentity()
+    await screen.findByRole('heading', { name: '12 Main St' })
+    expect(screen.queryAllByRole('button', { name: /^Preview photo \d+$/ })).toHaveLength(status === 200 && !stale ? 1 : 0)
+    await user.upload(screen.getByLabelText('Choose photo file'),
+      new File(['image'], status === 200 ? 'renamed-site.png' : 'site.png', { type: 'image/png' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm upload' }))
+    expect(await screen.findByRole('alertdialog', { name: status === 201
+      ? 'Photo uploaded successfully' : 'Photo already exists' })).toHaveTextContent(status === 201
+      ? 'GPS status: SUSPECT' : 'No new photo was created')
+    expect(getHouseDetail).toHaveBeenCalledTimes(1)
+    await user.click(screen.getByRole('button', { name: 'Back to upload' }))
+    expect(screen.getByRole('button', { name: 'Upload photo' })).toBeInTheDocument()
+    await screen.findByRole('heading', { name: '12 Main St (refreshed)' })
+    await screen.findByRole('button', { name: 'Preview photo 1' })
+    expect(screen.queryAllByRole('button', { name: /^Preview photo \d+$/ })).toHaveLength(1)
+    expect(screen.getByText('SUSPECT')).toBeInTheDocument()
+    expect(getHouseDetail).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the upload area available while the successful photo history refresh is pending', async () => {
+    sessionStorage.setItem(identityStorageKey, JSON.stringify({ version: identityStorageVersion,
+      identity: { user: 'frontend-demo', role: 'ADMIN', community: null } }))
+    URL.createObjectURL = vi.fn(() => 'blob:local-preview')
+    URL.revokeObjectURL = vi.fn()
+    let finishRefresh!: (value: HouseDetail) => void
+    vi.mocked(getHouseDetail).mockResolvedValueOnce(house)
+      .mockReturnValueOnce(new Promise(resolve => { finishRefresh = resolve }))
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ id: 91, houseId: 12,
+      locationStatus: 'VERIFIED' }), { status: 201, headers: { 'Content-Type': 'application/json' } })))
+    const user = userEvent.setup()
+    renderDetailWithIdentity()
+    await screen.findByRole('heading', { name: '12 Main St' })
+    await user.upload(screen.getByLabelText('Choose photo file'), new File(['image'], 'site.png', { type: 'image/png' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm upload' }))
+    expect(await screen.findByRole('alertdialog', { name: 'Photo uploaded successfully' })).toBeInTheDocument()
+    expect(getHouseDetail).toHaveBeenCalledTimes(1)
+    await user.click(screen.getByRole('button', { name: 'Back to upload' }))
+    expect(getHouseDetail).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('heading', { name: '12 Main St' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Upload photo' })).toBeInTheDocument()
+    expect(screen.queryByText('Loading house details…')).not.toBeInTheDocument()
+    await act(async () => finishRefresh({ ...house, photos: [{ id: 91, stage: 'FOUNDATION',
+      takenAt: null, uploadedAt: null, businessDate: null, url: null }] }))
+    expect(screen.getAllByRole('button', { name: /^Preview photo \d+$/ })).toHaveLength(1)
+    expect(screen.getByRole('button', { name: 'Upload photo' })).toBeInTheDocument()
+  })
+
+  it('does not apply a previous identity upload result after switching to Viewer', async () => {
+    sessionStorage.setItem(identityStorageKey, JSON.stringify({ version: identityStorageVersion,
+      identity: { user: 'frontend-demo', role: 'ADMIN', community: null } }))
+    URL.createObjectURL = vi.fn(() => 'blob:local-preview')
+    URL.revokeObjectURL = vi.fn()
+    vi.mocked(getHouseDetail).mockResolvedValue(house)
+    let finish!: (value: Response) => void
+    const fetchMock = vi.fn().mockReturnValue(new Promise<Response>(resolve => { finish = resolve }))
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    renderDetailWithIdentity()
+    await screen.findByRole('button', { name: 'Upload photo' })
+    await user.upload(screen.getByLabelText('Choose photo file'), new File(['image'], 'site.png', { type: 'image/png' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm upload' }))
+    expect(screen.getByRole('progressbar', { name: 'Upload in progress' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Use Viewer' }))
+    await screen.findByRole('heading', { name: '12 Main St' })
+    expect(screen.queryByRole('button', { name: 'Upload photo' })).not.toBeInTheDocument()
+    await act(async () => finish(new Response(JSON.stringify({ id: 91, houseId: 12,
+      locationStatus: 'VERIFIED' }), { status: 201, headers: { 'Content-Type': 'application/json' } })))
+    expect(screen.queryByText(/Photo uploaded/)).not.toBeInTheDocument()
+    expect(getHouseDetail).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('updates the upload hint for Admin, Viewer and exact Site Manager community', async () => {
     vi.mocked(getHouseDetail).mockResolvedValue(house)
     const user = userEvent.setup()
     renderDetailWithIdentity()
     await screen.findByRole('heading', { name: '12 Main St' })
-    expect(screen.queryByRole('button', { name: 'Upload photo coming soon' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Upload photo' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Use Admin' }))
-    expect(await screen.findByRole('button', { name: 'Upload photo coming soon' })).toBeDisabled()
+    expect(await screen.findByRole('button', { name: 'Upload photo' })).toBeEnabled()
     expect(screen.getByText('No site photos yet.')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Manage own community' }))
-    expect(await screen.findByRole('button', { name: 'Upload photo coming soon' })).toBeDisabled()
+    expect(await screen.findByRole('button', { name: 'Upload photo' })).toBeEnabled()
     expect(screen.getByText(/Demo manager area: Austin Council District 8.*Management entry is available/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Manage other community' }))
     await screen.findByRole('heading', { name: '12 Main St' })
-    expect(screen.queryByRole('button', { name: 'Upload photo coming soon' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Upload photo' })).not.toBeInTheDocument()
     expect(screen.getByText(/Demo manager area: Austin Council District 5.*outside your management area/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Manage lowercase community' }))
     await screen.findByRole('heading', { name: '12 Main St' })
-    expect(screen.queryByRole('button', { name: 'Upload photo coming soon' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Upload photo' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Use Viewer' }))
     await screen.findByRole('heading', { name: '12 Main St' })
-    expect(screen.queryByRole('button', { name: 'Upload photo coming soon' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Upload photo' })).not.toBeInTheDocument()
   })
 
   it('hides the old upload hint immediately during identity reload and after an authorization error', async () => {
@@ -94,13 +184,13 @@ describe('house detail page', () => {
     renderDetailWithIdentity()
     await screen.findByRole('heading', { name: '12 Main St' })
     await user.click(screen.getByRole('button', { name: 'Use Admin' }))
-    expect(await screen.findByRole('button', { name: 'Upload photo coming soon' })).toBeDisabled()
+    expect(await screen.findByRole('button', { name: 'Upload photo' })).toBeEnabled()
     await user.click(screen.getByRole('button', { name: 'Use Viewer' }))
     expect(screen.getByRole('status')).toHaveTextContent('Loading house details')
-    expect(screen.queryByRole('button', { name: 'Upload photo coming soon' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Upload photo' })).not.toBeInTheDocument()
     rejectViewer(new ApiError('The current demo identity is not permitted (HTTP 403).', 403))
     expect(await screen.findByRole('alert')).toHaveTextContent('HTTP 403')
-    expect(screen.queryByRole('button', { name: 'Upload photo coming soon' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Upload photo' })).not.toBeInTheDocument()
   })
 
   it('does not reveal an Admin upload hint before details load or after detail failure', async () => {
@@ -109,9 +199,9 @@ describe('house detail page', () => {
     vi.mocked(getHouseDetail).mockRejectedValue(new ApiError('Forbidden (HTTP 403).', 403))
     renderDetailWithIdentity()
     expect(screen.getByRole('status')).toHaveTextContent('Loading house details')
-    expect(screen.queryByRole('button', { name: 'Upload photo coming soon' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Upload photo' })).not.toBeInTheDocument()
     expect(await screen.findByRole('alert')).toHaveTextContent('HTTP 403')
-    expect(screen.queryByRole('button', { name: 'Upload photo coming soon' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Upload photo' })).not.toBeInTheDocument()
   })
   it('refetches the same house after identity changes and never displays the previous identity detail', async () => {
     vi.mocked(getHouseDetail).mockResolvedValueOnce(house)

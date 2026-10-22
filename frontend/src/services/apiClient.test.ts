@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { viewerIdentity } from '../app/DemoIdentityContext'
-import { apiIdentityHeaders, getJson } from './apiClient'
+import { apiIdentityHeaders, getJson, getProtectedImage } from './apiClient'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -41,6 +41,43 @@ describe('shared business API identity and errors', () => {
   it('explains a network failure without misreporting it as empty data', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('Failed to fetch')))
     await expect(getJson('/api/houses', undefined, viewerIdentity))
+      .rejects.toThrow(/Could not reach the backend/)
+  })
+
+  it.each([
+    [{ user: 'frontend-demo', role: 'VIEWER', community: null }, undefined],
+    [{ user: 'frontend-demo', role: 'ADMIN', community: null }, undefined],
+    [{ user: 'frontend-demo', role: 'SITE_MANAGER', community: 'Austin Council District 8' }, 'Austin Council District 8'],
+  ] as const)('reads protected original photos with the current identity', async (identity, community) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(new Blob(['image'], { type: 'image/png' }), {
+      headers: { 'Content-Type': 'image/png' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const controller = new AbortController()
+    expect((await getProtectedImage('/api/houses/12/photos/8/file', controller.signal, identity)).size).toBeGreaterThan(0)
+    const [path, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+    expect(path).toBe('/api/houses/12/photos/8/file')
+    expect(options.signal).toBe(controller.signal)
+    expect(options.headers).toMatchObject({ 'X-User': 'frontend-demo', 'X-Role': identity.role })
+    expect((options.headers as Record<string, string>)['X-Community']).toBe(community)
+  })
+
+  it('rejects external image URLs before sending credentials, and distinguishes image failures', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(null, { status: 401 }))
+      .mockResolvedValueOnce(new Response(null, { status: 403 }))
+      .mockResolvedValueOnce(new Response(null, { status: 404 }))
+      .mockRejectedValueOnce(new TypeError('network failure'))
+    vi.stubGlobal('fetch', fetchMock)
+    const controller = new AbortController()
+    const path = '/api/houses/12/photos/8/file'
+    await expect(getProtectedImage('https://tile.openstreetmap.org/1/2/3.png', controller.signal, viewerIdentity))
+      .rejects.toThrow(/invalid/)
+    expect(fetchMock).not.toHaveBeenCalled()
+    for (const status of [401, 403, 404]) {
+      await expect(getProtectedImage(path, controller.signal, viewerIdentity)).rejects.toMatchObject({ status })
+    }
+    await expect(getProtectedImage(path, controller.signal, viewerIdentity))
       .rejects.toThrow(/Could not reach the backend/)
   })
 })

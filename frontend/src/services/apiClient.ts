@@ -60,6 +60,66 @@ async function requestJson(path: string, signal: AbortSignal | undefined, identi
   }
 }
 
+/** Protected binary requests use the same local-only identity boundary as JSON requests. */
+export async function getProtectedImage(path: string, signal: AbortSignal, identity: DemoIdentity): Promise<Blob> {
+  if (!/^\/api\/houses\/[1-9]\d*\/photos\/[1-9]\d*\/file$/.test(path)) {
+    throw new ApiError('The photo file URL is invalid.')
+  }
+  const headers = apiIdentityHeaders(identity)
+  let response: Response
+  try {
+    response = await fetch(path, { signal, headers: { Accept: 'image/jpeg, image/png, image/webp', ...headers } })
+  } catch (error) {
+    if (signal.aborted) throw error
+    throw new ApiError('Could not reach the backend. Check that the API server is running.')
+  }
+  if (!response.ok) {
+    const message = response.status === 401 ? 'The current demo identity was not accepted (HTTP 401).'
+      : response.status === 403 ? 'The current demo identity is not permitted to read this photo (HTTP 403).'
+        : response.status === 404 ? 'This photo file was not found (HTTP 404).'
+          : `The photo could not be loaded (HTTP ${response.status}).`
+    throw new ApiError(message, response.status)
+  }
+  const type = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase()
+  if (!type || !['image/jpeg', 'image/png', 'image/webp'].includes(type)) {
+    throw new ApiError('The backend returned an invalid photo file type.')
+  }
+  const blob = await response.blob()
+  if (!blob.size) throw new ApiError('The backend returned an empty photo file.')
+  return blob
+}
+
+/** Do not set Content-Type: the browser must add the multipart boundary. */
+export async function postMultipart(path: string, form: FormData, identity: DemoIdentity): Promise<{ status: number; data: unknown }> {
+  if (!/^\/api\/houses\/[1-9]\d*\/photos$/.test(path)) throw new ApiError('The photo upload URL is invalid.')
+  const headers = apiIdentityHeaders(identity)
+  let response: Response
+  try {
+    response = await fetch(path, { method: 'POST', headers: { Accept: 'application/json', ...headers }, body: form })
+  } catch {
+    throw new ApiError('The upload result is unknown. Check the house details before trying again.')
+  }
+  if (!response.ok) {
+    let detail: string | null = null
+    try {
+      const body = await response.json() as unknown
+      if (typeof body === 'object' && body !== null && 'message' in body &&
+          typeof body.message === 'string' && body.message.trim()) detail = body.message.trim()
+    } catch { /* A response body is not required for an HTTP error. */ }
+    const label = response.status === 401 ? 'The current demo identity was not accepted'
+      : response.status === 403 ? 'This identity cannot upload to this house'
+        : response.status === 413 ? 'The photo is too large'
+          : response.status === 415 ? 'The photo format is not supported'
+            : response.status === 422 ? 'The photo did not satisfy a business rule'
+              : 'The photo upload was rejected'
+    throw new ApiError(`${label} (HTTP ${response.status}).${detail ? ` ${detail}` : ''}`, response.status)
+  }
+  let data: unknown
+  try { data = await response.json() as unknown }
+  catch { throw new ApiError('The upload may have succeeded, but the response was invalid. Refresh details before trying again.') }
+  return { status: response.status, data }
+}
+
 export async function getJson(path: string, signal: AbortSignal | undefined, identity: DemoIdentity): Promise<unknown> {
   return (await requestJson(path, signal, identity, 'GET')).data
 }

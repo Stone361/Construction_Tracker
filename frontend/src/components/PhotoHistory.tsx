@@ -1,8 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { displayUtcInstant } from '../services/houseDetail'
+import { useDemoIdentity } from '../app/DemoIdentityContext'
+import { displayChicagoBusinessDate, displayUtcInstant } from '../services/houseDetail'
 import type { HousePhoto } from '../services/houseDetail'
+import { useProtectedImages } from '../services/useProtectedImages'
+import type { ProtectedImageState } from '../services/useProtectedImages'
 import { stageLabel } from '../services/houses'
+import { PhotoUploadCard } from './PhotoUploadCard'
+import type { UploadOutcome } from './PhotoUploadCard'
 import styles from './PhotoHistory.module.css'
 
 function PhotoFacts({ photo }: { photo: HousePhoto }) {
@@ -10,17 +15,30 @@ function PhotoFacts({ photo }: { photo: HousePhoto }) {
     <span><span>Photo stage</span><strong>{stageLabel(photo.stage)}</strong></span>
     <span><span>Taken at · UTC</span><strong>{displayUtcInstant(photo.takenAt)}</strong></span>
     <span><span>Uploaded at · UTC</span><strong>{displayUtcInstant(photo.uploadedAt)}</strong></span>
+    <span><span>Time source</span><strong>{photo.takenAtSource ?? 'Not available'}</strong></span>
+    <span><span>Business date · Chicago</span><strong>{displayChicagoBusinessDate(photo.businessDate)}</strong></span>
+    <span><span>GPS status</span><strong>{photo.locationStatus ?? 'Not available'}</strong></span>
   </span>
 }
 
-function Placeholder({ large = false }: { large?: boolean }) {
-  return <span className={`${styles.placeholder} ${large ? styles.placeholderLarge : ''}`} aria-label="Image placeholder">
-    <span className={styles.placeholderMark} aria-hidden="true">CT</span>
-    <span>Image placeholder</span>
+function PhotoVisual({ image, number, large = false }: { image: ProtectedImageState; number: number; large?: boolean }) {
+  if (image.kind === 'ready') return <img className={large ? styles.photoLarge : styles.photoImage}
+    src={image.src} alt={large ? `Enlarged site photo ${number}` : `Site photo ${number}`} />
+  return <span className={`${styles.photoFallback} ${large ? styles.photoFallbackLarge : ''}`}
+    role={image.kind === 'loading' ? 'status' : 'alert'}>
+    {image.kind === 'loading' ? 'Loading photo…' : image.message}
   </span>
 }
 
-export function PhotoHistory({ photos, canUpload = false }: { photos: HousePhoto[]; canUpload?: boolean }) {
+export function PhotoHistory({ houseId, photos, canUpload = false, onUploadComplete, onRefreshDetails }: {
+  houseId: number
+  photos: HousePhoto[]
+  canUpload?: boolean
+  onUploadComplete?: (outcome: UploadOutcome) => void
+  onRefreshDetails?: () => void
+}) {
+  const { identity, version } = useDemoIdentity()
+  const { imageFor, retry } = useProtectedImages(photos.map(photo => photo.url), identity, version)
   const railRef = useRef<HTMLOListElement | null>(null)
   const dialogRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
@@ -95,7 +113,7 @@ export function PhotoHistory({ photos, canUpload = false }: { photos: HousePhoto
       <div>
         <p className={styles.eyebrow}>SITE RECORD</p>
         <h2 id="photo-history-heading">Photo history</h2>
-        <p>Photo details come from the house record. Images are placeholders until protected viewing is available.</p>
+        <p>Photo details and protected original images come from the house record.</p>
       </div>
       {canUpload && scrollable.right && <button className={styles.jumpToUpload} type="button"
         onClick={jumpToUpload}>Upload card at end →</button>}
@@ -110,16 +128,14 @@ export function PhotoHistory({ photos, canUpload = false }: { photos: HousePhoto
         {photos.map((photo, index) => <li key={photo.id} className={styles.item}>
           <button type="button" className={styles.photoCard} aria-label={`Preview photo ${index + 1}`}
             onClick={event => { triggerRef.current = event.currentTarget; setSelectedPhotoId(photo.id) }}>
-            <Placeholder />
+            <PhotoVisual image={imageFor(photo.url)} number={index + 1} />
             <span className={styles.photoDetails}><span className={styles.photoNumber}>Photo {index + 1}</span><PhotoFacts photo={photo} /></span>
           </button>
+          {imageFor(photo.url).kind === 'error' && photo.url && <button className={styles.retry} type="button"
+            onClick={() => retry(photo.url)}>Retry photo {index + 1}</button>}
         </li>)}
-        {canUpload && <li className={styles.item}>
-          <button type="button" className={styles.uploadCard} disabled aria-label="Upload photo coming soon">
-            <span className={styles.uploadPlus} aria-hidden="true">+</span>
-            <strong>Upload photo</strong>
-            <span>Coming soon</span>
-          </button>
+        {canUpload && <li key="upload" className={styles.item}>
+          <PhotoUploadCard houseId={houseId} onComplete={onUploadComplete} onRefreshDetails={onRefreshDetails} />
         </li>}
       </ol>}
     {selectedPhoto && createPortal(
@@ -141,12 +157,14 @@ export function PhotoHistory({ photos, canUpload = false }: { photos: HousePhoto
             }
           }}>
           <div className={styles.dialogHeader}>
-            <div><p className={styles.eyebrow}>PHOTO PREVIEW · IMAGE PLACEHOLDER</p>
+            <div><p className={styles.eyebrow}>PHOTO PREVIEW · PROTECTED ORIGINAL</p>
               <h2 id="photo-preview-heading">Photo {selectedIndex + 1} of {photos.length}</h2></div>
             <button type="button" className={styles.close} aria-label="Close photo preview"
               onClick={() => setSelectedPhotoId(null)}>✕</button>
           </div>
-          <Placeholder large />
+          <PhotoVisual image={imageFor(selectedPhoto.url)} number={selectedIndex + 1} large />
+          {imageFor(selectedPhoto.url).kind === 'error' && selectedPhoto.url &&
+            <button className={styles.retry} type="button" onClick={() => retry(selectedPhoto.url)}>Retry photo</button>}
           <div className={styles.dialogFooter}>
             <button type="button" disabled={selectedIndex === 0} onClick={() => movePhoto(-1)}>← Previous</button>
             <PhotoFacts photo={selectedPhoto} />

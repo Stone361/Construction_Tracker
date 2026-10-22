@@ -25,6 +25,8 @@ export interface HouseDetail {
 export interface HousePhoto {
   id: number
   stage: ConstructionStage | null
+  locationStatus?: 'VERIFIED' | 'SUSPECT' | 'UNKNOWN' | null
+  takenAtSource?: 'EXIF' | 'UPLOAD' | null
   takenAt: string | null
   uploadedAt: string | null
   businessDate: string | null
@@ -64,10 +66,13 @@ function photo(value: unknown, houseId: number): HousePhoto {
     id: item.id,
     stage: typeof item.stage === 'string' && constructionStages.includes(item.stage as ConstructionStage)
       ? item.stage as ConstructionStage : null,
+    locationStatus: item.locationStatus === 'VERIFIED' || item.locationStatus === 'SUSPECT' ||
+      item.locationStatus === 'UNKNOWN' ? item.locationStatus : null,
+    takenAtSource: item.takenAtSource === 'EXIF' || item.takenAtSource === 'UPLOAD' ? item.takenAtSource : null,
     takenAt: utcInstant(item.takenAt),
     uploadedAt: utcInstant(item.uploadedAt),
     businessDate: businessDate(item.businessDate),
-    url: text(item.url),
+    url: item.url === `/api/houses/${houseId}/photos/${item.id}/file` ? item.url : null,
   }
 }
 
