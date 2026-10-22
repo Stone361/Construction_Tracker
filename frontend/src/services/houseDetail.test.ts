@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { viewerIdentity } from '../app/DemoIdentityContext'
-import { displayChicagoBusinessDate, displayUtcInstant, getHouseDetail, parseHouseDetail } from './houseDetail'
+import { displayChicagoBusinessDate, displayUtcInstant, getHouseDetail, latestPhotoBusinessDate, parseHouseDetail } from './houseDetail'
 
 export const detailFixture = {
   id: 12, permitNo: 'P-12', address: '12 Main St', community: 'Austin Council District 8',
@@ -52,6 +52,17 @@ describe('house detail API', () => {
       takenAt: '2026-01-01T04:00:00.000Z', uploadedAt: '2026-01-03T07:00:00.000Z',
       businessDate: '2025-12-31' })
     expect(parsed.photos[1]).toMatchObject({ stage: 'FRAMING', takenAt: null, uploadedAt: null })
+  })
+
+  it('finds the latest photo business date without using upload time or backend photo order', () => {
+    const parsed = parseHouseDetail({ ...detailFixture, photos: [
+      { id: 8, houseId: 12, businessDate: '2026-01-01', uploadedAt: '2026-10-22T00:00:00Z' },
+      { id: 9, houseId: 12, businessDate: null, uploadedAt: '2026-10-23T00:00:00Z' },
+      { id: 10, houseId: 12, businessDate: '2026-02-03', uploadedAt: '2026-03-01T00:00:00Z' },
+    ] }, 12)
+    expect(latestPhotoBusinessDate(parsed.photos)).toBe('2026-02-03')
+    expect(latestPhotoBusinessDate(parsed.photos.slice(0, 2).filter(photo => photo.businessDate === null))).toBeNull()
+    expect(latestPhotoBusinessDate([])).toBeNull()
   })
 
   it('rejects a response for a different house or a malformed detail DTO', () => {

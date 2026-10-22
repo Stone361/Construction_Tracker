@@ -20,7 +20,7 @@ export function apiIdentityHeaders(identity: DemoIdentity): Record<string, strin
 }
 
 async function requestJson(path: string, signal: AbortSignal | undefined, identity: DemoIdentity,
-  method: 'GET' | 'POST', body?: unknown): Promise<{ status: number; data: unknown }> {
+  method: 'GET' | 'POST' | 'PUT', body?: unknown): Promise<{ status: number; data: unknown }> {
   if (!path.startsWith('/api/')) throw new ApiError('Business API requests must use a local /api/ path.')
   const headers = apiIdentityHeaders(identity)
   let response: Response
@@ -30,10 +30,10 @@ async function requestJson(path: string, signal: AbortSignal | undefined, identi
       method,
       headers: {
         Accept: 'application/json',
-        ...(method === 'POST' ? { 'Content-Type': 'application/json' } : {}),
+        ...(method !== 'GET' ? { 'Content-Type': 'application/json' } : {}),
         ...headers,
       },
-      ...(method === 'POST' ? { body: JSON.stringify(body) } : {}),
+      ...(method !== 'GET' ? { body: JSON.stringify(body) } : {}),
     })
   } catch (error) {
     if (signal?.aborted) throw error
@@ -41,6 +41,14 @@ async function requestJson(path: string, signal: AbortSignal | undefined, identi
   }
 
   if (!response.ok) {
+    let detail: string | null = null
+    if (response.status === 409 || response.status === 422) {
+      try {
+        const body = await response.json() as unknown
+        if (typeof body === 'object' && body !== null && 'message' in body &&
+            typeof body.message === 'string' && body.message.trim()) detail = body.message.trim()
+      } catch { /* Fall back to the HTTP status when the error body is unavailable. */ }
+    }
     const message = response.status === 401
       ? 'The current demo identity was not accepted (HTTP 401).'
       : response.status === 403
@@ -49,8 +57,12 @@ async function requestJson(path: string, signal: AbortSignal | undefined, identi
           ? 'The backend rejected the submitted details (HTTP 400). Review the form and try again.'
         : response.status === 404
           ? 'The requested resource was not found (HTTP 404).'
+        : response.status === 409
+          ? 'The house stage has changed (HTTP 409).'
+        : response.status === 422
+          ? 'The operation does not satisfy a business rule (HTTP 422).'
           : `The API request failed (HTTP ${response.status}).`
-    throw new ApiError(message, response.status)
+    throw new ApiError(`${message}${detail ? ` ${detail}` : ''}`, response.status)
   }
 
   try {
@@ -127,4 +139,8 @@ export async function getJson(path: string, signal: AbortSignal | undefined, ide
 export function postJson(path: string, body: unknown, signal: AbortSignal | undefined,
   identity: DemoIdentity): Promise<{ status: number; data: unknown }> {
   return requestJson(path, signal, identity, 'POST', body)
+}
+
+export function putJson(path: string, body: unknown, identity: DemoIdentity): Promise<{ status: number; data: unknown }> {
+  return requestJson(path, undefined, identity, 'PUT', body)
 }

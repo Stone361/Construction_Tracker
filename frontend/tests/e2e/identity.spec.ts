@@ -94,14 +94,14 @@ test('Site Manager uses a real community and Viewer drops the community header',
     !('x-community' in request.headers))).toBe(true)
 })
 
-test('a delayed Viewer response cannot replace the latest Admin data or reset the map filter', async ({ page }) => {
-  let holdViewer = false
+test('a delayed full-catalog Viewer response cannot replace Admin search results or reset the stage filter', async ({ page }) => {
+  const holdViewer = true
   let releaseOld: (() => void) | undefined
   let oldQuery: string | undefined
   let adminQuery: string | undefined
   await page.route('**/api/houses*', async route => {
     const url = new URL(route.request().url())
-    if (url.pathname !== '/api/houses' || !url.searchParams.has('minLat')) return route.fallback()
+    if (url.pathname !== '/api/houses' || url.searchParams.has('minLat')) return route.fallback()
     const role = route.request().headers()['x-role']
     if (role === 'VIEWER' && holdViewer) {
       oldQuery = url.search
@@ -123,18 +123,16 @@ test('a delayed Viewer response cannot replace the latest Admin data or reset th
   await page.goto('/map')
   await expect(page.getByRole('status')).toContainText('2 houses in view · 2 map markers')
   await page.getByLabel('Construction stage').selectOption('FOUNDATION')
-  await expect(page.getByRole('status')).toContainText('2 houses in view · 2 map markers')
-  holdViewer = true
-  await page.getByRole('button', { name: 'Zoom in', exact: true }).click()
-  await expect.poll(() => oldQuery).toBeTruthy()
+  await expect.poll(() => oldQuery).toBeDefined()
   await page.getByLabel('Demo identity').selectOption('ADMIN')
   await expect(page.getByRole('button', { name: 'View Latest Admin result' })).toBeVisible()
   expect(adminQuery).toBe(oldQuery)
-  expect(new URLSearchParams(adminQuery).get('stage')).toBe('FOUNDATION')
+  expect(adminQuery).toBe('')
   releaseOld?.()
   await expect(page.getByRole('button', { name: 'View Old Viewer result' })).toHaveCount(0)
   await expect(page.getByRole('alert')).toHaveCount(0)
-  await expect(page.getByRole('status')).toContainText('1 house in view · 1 map marker')
+  await expect(page.getByRole('combobox', { name: 'Construction stage' })).toHaveValue('FOUNDATION')
+  await expect(page.getByRole('status')).toContainText('1 house found · 1 map marker')
 })
 
 test('create entry and upload hint follow Admin, Viewer and exact Site Manager ownership', async ({ page }) => {

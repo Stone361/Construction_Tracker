@@ -1,0 +1,11 @@
+.backdrop { position: fixed; z-index: 1200; inset: 0; display: grid; place-items: center; padding: 1rem; background: rgb(16 35 27 / 62%); }
+.dialog { width: min(100%, 31rem); padding: clamp(1.25rem, 3vw, 2rem); border: 1px solid var(--color-border); border-radius: var(--radius-large); background: var(--color-surface); box-shadow: 0 1.5rem 4rem rgb(16 35 27 / 25%); }
+.eyebrow { margin: 0 0 .5rem; color: var(--color-accent); font-size: .65rem; font-weight: 750; letter-spacing: .14em; }
+.dialog h2 { margin: 0; font-size: 1.35rem; }
+.dialog p:not(.eyebrow) { color: var(--color-muted); font-size: .85rem; line-height: 1.55; }
+.dialog .transition { margin: 1.25rem 0; color: var(--color-text); font-size: 1.1rem; font-weight: 750; }
+.transition span { padding: 0 .4rem; color: var(--color-accent); }
+.actions { display: flex; justify-content: flex-end; gap: .65rem; margin-top: 1.5rem; }
+.actions button { padding: .7rem 1rem; border: 1px solid var(--color-border); border-radius: var(--radius-small); background: var(--color-surface); color: var(--color-text); font: inherit; font-size: .8rem; font-weight: 700; cursor: pointer; }
+.actions .confirm { border-color: var(--color-accent); background: var(--color-accent); color: white; }
+.actions button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }

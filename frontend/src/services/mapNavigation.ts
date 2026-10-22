@@ -9,6 +9,8 @@ export interface MapSnapshot {
   view: MapView
   stage: ConstructionStage | null
   selectedHouseId: number | null
+  community?: string | null
+  addressSearch?: string
 }
 
 export function mapSnapshotFromState(state: unknown): MapSnapshot | null {
@@ -29,5 +31,9 @@ export function mapSnapshotFromState(state: unknown): MapSnapshot | null {
     ? saved.stage as ConstructionStage : null
   const selectedHouseId = typeof saved.selectedHouseId === 'number' &&
     Number.isSafeInteger(saved.selectedHouseId) && saved.selectedHouseId > 0 ? saved.selectedHouseId : null
-  return { view: { center: [center[0], center[1]], zoom }, stage, selectedHouseId }
+  const community = typeof saved.community === 'string' && saved.community.trim()
+    ? saved.community : null
+  const addressSearch = typeof saved.addressSearch === 'string' && saved.addressSearch.length <= 200
+    ? saved.addressSearch : ''
+  return { view: { center: [center[0], center[1]], zoom }, stage, selectedHouseId, community, addressSearch }
 }

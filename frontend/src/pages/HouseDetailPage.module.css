@@ -9,11 +9,18 @@
 .detailContent { min-width: 0; }
 .coverCard { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(15rem, 1fr); overflow: hidden; margin-bottom: 1.25rem; border: 1px solid var(--color-border); border-radius: var(--radius-large); background: var(--color-surface); box-shadow: var(--shadow-panel); }
 .coverVisual { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: .7rem; min-height: 12rem; aspect-ratio: 16 / 6; background: linear-gradient(145deg, #e5eee4, #d6e4da); color: #456451; font-size: .78rem; font-weight: 700; }
+.coverImage { display: block; width: 100%; height: 100%; object-fit: cover; }
 .coverMark { display: grid; place-items: center; width: 3rem; height: 3rem; border: 1px solid #a4bdaa; border-radius: .7rem; color: var(--color-accent); font-size: .85rem; }
 .coverCaption { align-self: center; padding: 1.5rem; }
 .coverCaption h2 { margin: 0 0 .65rem; font-size: 1.1rem; letter-spacing: -.02em; }
 .coverCaption p { margin: 0; color: var(--color-muted); font-size: .78rem; line-height: 1.6; }
-.sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.25rem; align-items: start; }
+.coverFacts { display: grid; gap: .7rem; margin: 0; }
+.coverFacts div { min-width: 0; }
+.coverFacts dt { margin-bottom: .2rem; color: var(--color-muted); font-size: .72rem; }
+.coverFacts dd { margin: 0; overflow-wrap: anywhere; font-size: .84rem; font-weight: 650; line-height: 1.45; }
+.coverFacts + p { margin-top: .8rem; }
+.retryCover { margin-top: .8rem; padding: .5rem .75rem; border: 0; border-radius: var(--radius-small); background: var(--color-accent); color: #fff; font-size: .75rem; font-weight: 700; cursor: pointer; }
+.sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.25rem; align-items: stretch; }
 .card, .message { padding: clamp(1.25rem, 2.5vw, 2rem); border: 1px solid var(--color-border); border-radius: var(--radius-large); background: var(--color-surface); box-shadow: var(--shadow-panel); }
 .card h2 { margin: 0 0 1.5rem; font-size: 1.1rem; letter-spacing: -.02em; }
 .fields { display: grid; gap: 1.1rem; margin: 0; }
@@ -22,7 +29,12 @@
 .fields dt { margin-bottom: .35rem; color: var(--color-muted); font-size: .72rem; }
 .fields dd { margin: 0; overflow-wrap: anywhere; font-size: .88rem; font-weight: 600; line-height: 1.5; }
 .fields a { font-weight: 600; }
-.areaNote { margin: 1.4rem 0 0; color: var(--color-muted); font-size: .75rem; line-height: 1.5; }
+.fieldSecondary { display: block; margin-top: .2rem; color: var(--color-muted); font-size: .75rem; font-weight: 500; }
+.areaNote { margin: .75rem 0 0; color: var(--color-muted); font-size: .75rem; line-height: 1.5; }
+.advanceNotice { margin: 0 0 1.25rem; padding: .85rem 1rem; border: 1px solid var(--color-border); border-radius: var(--radius-small); background: var(--color-surface); color: var(--color-text); font-size: .82rem; line-height: 1.5; }
+.success { border-color: #bbd9c0; background: #f1f8f2; }
+.warning { border-color: #e4cfa4; background: #fff9ed; }
+.error { border-color: #e2bcb7; background: #fff4f1; }
 .message { max-width: 42rem; color: var(--color-muted); font-size: .9rem; }
 .message p { margin-top: 0; }
 .message button { padding: .65rem .9rem; border: 0; border-radius: var(--radius-small); background: var(--color-accent); color: white; font-weight: 700; cursor: pointer; }

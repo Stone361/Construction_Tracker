@@ -76,7 +76,7 @@ test('landing page has honest search feedback and keyboard map navigation', asyn
   await expect(page).toHaveURL('/map')
   await expect(page.getByRole('heading', { name: 'Austin, Texas', level: 1 })).toBeVisible()
   await expectZoom(page, 12)
-  await expect(page.getByRole('status')).toContainText('No houses match this map view and stage.')
+  await expect(page.getByRole('status')).toContainText('No houses in the current map view.')
   await expect(page.locator('.leaflet-marker-icon')).toHaveCount(0)
 })
 
@@ -164,7 +164,7 @@ test('house cards and map markers share one selection while a card focus updates
   await page.goto('/map')
   await expect(page.locator('.leaflet-marker-icon')).toHaveCount(2)
   await expect(page.getByRole('status')).toContainText('2 houses in view · 2 map markers')
-  const list = page.getByRole('list', { name: 'Houses sorted by latest photo business date' })
+  const list = page.getByRole('list', { name: 'House cards' })
   await expect(list.getByRole('button').first()).toHaveAttribute('aria-label', 'View 12 Main St')
   await page.locator('.leaflet-marker-icon[title="House 11"]').click()
   await expect(page.getByRole('heading', { name: '11 Main St' })).toBeVisible()
@@ -190,37 +190,44 @@ test('house cards and map markers share one selection while a card focus updates
   expect(requests).toBeLessThanOrEqual(4) // Initial query, StrictMode retry and one card-driven map move.
 })
 
-test('map view and construction stage share one bounded query and filtered card and marker result', async ({ page }) => {
+test('full-catalog filters stay independent of map bounds and clearing restores bounded browsing', async ({ page }) => {
   const queries: URL[] = []
   await page.route('**/api/houses*', route => {
     const url = new URL(route.request().url())
     queries.push(url)
-    const houses = [
-      { id: 11, address: '11 Main St', stage: 'FOUNDATION', lat: 30.2672, lng: -97.7431 },
-      { id: 12, address: '12 Main St', stage: 'FRAMING', lat: 30.3, lng: -97.7 },
-    ]
-    return route.fulfill({ json: url.searchParams.get('stage')
-      ? houses.filter(house => house.stage === url.searchParams.get('stage')) : houses })
+    const inView = { id: 11, address: '8023 NW St', community: 'Austin Council District 8', stage: 'FOUNDATION', lat: 30.2672, lng: -97.7431 }
+    const remote = { id: 12, address: '8023 SW St', community: 'Austin Council District 5', stage: 'FRAMING', lat: 40.3, lng: -100.7 }
+    const noCoordinates = { id: 13, address: '8023 No Coordinates', community: 'Austin Council District 5', stage: 'FRAMING', lat: null, lng: null }
+    return route.fulfill({ json: url.searchParams.has('minLat') ? [inView] : [inView, remote, noCoordinates] })
   })
   await page.goto('/map')
-  await expect(page.getByRole('status')).toContainText('2 houses in view · 2 map markers')
-  const initial = queries.at(-1)
+  await expect(page.getByRole('status')).toContainText('1 house in view · 1 map marker')
+  await expect(page.getByLabel('Community / Area').locator('option')).toHaveCount(3)
+  const initial = queries.find(query => query.searchParams.has('minLat'))
+  const beforeFilters = queries.length
   expect(initial?.searchParams.has('bbox')).toBe(false)
   for (const name of ['minLat', 'maxLat', 'minLng', 'maxLng']) {
     expect(Number.isFinite(Number(initial?.searchParams.get(name)))).toBe(true)
   }
+  expect(initial?.searchParams.has('stage')).toBe(false)
+  await page.getByRole('searchbox', { name: 'Search address' }).fill('8023')
+  await expect(page.getByRole('status')).toContainText('3 houses found · 2 map markers')
+  await expect(page.getByRole('button', { name: 'View 8023 SW St' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'View 8023 No Coordinates' })).toBeVisible()
+  await page.getByLabel('Community / Area').selectOption('Austin Council District 5')
+  await expect(page.getByRole('status')).toContainText('2 houses found · 1 map marker')
+  await expect(page.getByRole('button', { name: 'View 8023 SW St' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'View 8023 NW St' })).toHaveCount(0)
+  await page.getByLabel('Construction stage').selectOption('FOUNDATION')
+  await expect(page.getByRole('status')).toContainText('No houses match these filters.')
   await page.getByLabel('Construction stage').selectOption('FRAMING')
-  await expect(page.getByRole('status')).toContainText('1 house in view · 1 map marker')
-  await expect(page.getByRole('button', { name: 'View 12 Main St' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'View 11 Main St' })).toHaveCount(0)
-  expect(queries.at(-1)?.searchParams.get('stage')).toBe('FRAMING')
+  await expect(page.getByRole('status')).toContainText('2 houses found · 1 map marker')
+  await page.getByRole('searchbox', { name: 'Search address' }).fill('SW ST')
+  await expect(page.getByRole('status')).toContainText('1 house found · 1 map marker')
+  expect(queries).toHaveLength(beforeFilters)
+  expect(queries.every(query => !query.searchParams.has('stage'))).toBe(true)
 
-  const beforeZoom = queries.length
   await page.getByRole('button', { name: 'Zoom in', exact: true }).click()
-  await expect.poll(() => queries.length).toBeGreaterThan(beforeZoom)
-  expect(queries.at(-1)?.searchParams.get('stage')).toBe('FRAMING')
-  expect(queries.at(-1)?.searchParams.get('minLat')).not.toBe(initial?.searchParams.get('minLat'))
-  const beforePan = queries.length
   const mapBounds = await page.locator('.leaflet-container').boundingBox()
   if (!mapBounds) throw new Error('Map must have visible bounds')
   const x = mapBounds.x + mapBounds.width / 2
@@ -229,11 +236,16 @@ test('map view and construction stage share one bounded query and filtered card 
   await page.mouse.down()
   await page.mouse.move(x + 160, y + 70, { steps: 10 })
   await page.mouse.up()
-  await expect.poll(() => queries.length).toBeGreaterThan(beforePan)
-  expect(queries.at(-1)?.searchParams.get('stage')).toBe('FRAMING')
-  const settledCount = queries.length
+  await expect(page.getByRole('status')).toContainText('1 house found · 1 map marker')
   await page.waitForTimeout(200)
-  expect(queries).toHaveLength(settledCount)
+  expect(queries).toHaveLength(beforeFilters)
+
+  await page.getByLabel('Construction stage').selectOption('')
+  await page.getByLabel('Community / Area').selectOption('')
+  await page.getByRole('searchbox', { name: 'Search address' }).fill('')
+  await expect(page.getByRole('status')).toContainText('1 house in view · 1 map marker')
+  await expect.poll(() => queries.length).toBeGreaterThan(beforeFilters)
+  expect(queries.at(-1)?.searchParams.get('minLat')).not.toBe(initial?.searchParams.get('minLat'))
 })
 
 test('long house list scrolls inside the right pane while the page and title stay fixed', async ({ page }) => {
@@ -243,14 +255,14 @@ test('long house list scrolls inside the right pane while the page and title sta
   })) }))
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/map')
-  const list = page.getByRole('list', { name: 'Houses sorted by latest photo business date' })
+  const list = page.getByRole('list', { name: 'House cards' })
   await expect(list.getByRole('listitem')).toHaveCount(12)
-  const before = await page.getByRole('heading', { name: 'Recent photo activity' }).boundingBox()
+  const before = await page.getByRole('heading', { name: 'House Explorer' }).boundingBox()
   const body = list.locator('..')
   expect(await body.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
   await body.evaluate(element => { element.scrollTop = element.scrollHeight })
   await expect(list.getByRole('button', { name: 'View 12 Main St' })).toBeInViewport()
-  const after = await page.getByRole('heading', { name: 'Recent photo activity' }).boundingBox()
+  const after = await page.getByRole('heading', { name: 'House Explorer' }).boundingBox()
   expect(after?.y).toBe(before?.y)
   expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBe(900)
 })
@@ -265,7 +277,7 @@ test('backend failure is visible and can be retried', async ({ page }) => {
   await expect(page.locator('.leaflet-marker-icon')).toHaveCount(0)
   unavailable = false
   await page.getByRole('button', { name: 'Retry house data' }).click()
-  await expect(page.getByRole('status')).toContainText('No houses match this map view and stage.')
+  await expect(page.getByRole('status')).toContainText('No houses in the current map view.')
 })
 
 test('map survives refresh, home navigation and browser back/forward', async ({ page }) => {

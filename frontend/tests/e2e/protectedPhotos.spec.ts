@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { expect, test } from '@playwright/test'
 
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/iZkAAAAASUVORK5CYII=', 'base64')
@@ -19,6 +20,124 @@ test.beforeEach(async ({ page }) => {
       stage: 'FOUNDATION', lat: 30.27, lng: -97.74 },
   ] }))
   await page.route('**/api/houses/225', route => route.fulfill({ json: detail }))
+})
+
+test('map cards use only backend-selected covers and detail shares the cover with photo history', async ({ page }) => {
+  const tilePath = fileURLToPath(new URL('../fixtures/map-tile.svg', import.meta.url))
+  await page.route('https://tile.openstreetmap.org/**', route => route.fulfill({
+    path: tilePath, contentType: 'image/svg+xml',
+  }))
+  await page.route(url => url.pathname === '/api/houses', route => route.fulfill({ json: [
+    { id: 225, address: detail.address, community: detail.community, stage: detail.stage,
+      lat: detail.lat, lng: detail.lng, coverPhotoUrl: '/api/houses/225/photos/77/file' },
+    { id: 226, address: 'No cover house', community: detail.community, stage: detail.stage,
+      lat: detail.lat, lng: detail.lng, coverPhotoUrl: null },
+  ] }))
+  const requests: string[] = []
+  await page.route('**/api/houses/225/photos/*/file', route => {
+    requests.push(new URL(route.request().url()).pathname)
+    expect(route.request().headers()['x-role']).toBe('VIEWER')
+    return route.fulfill({ body: png, contentType: 'image/png' })
+  })
+  await page.goto('/map')
+  await expect(page.getByRole('img', { name: 'Cover of Photo demo, Austin, TX' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'View No cover house' }).getByRole('img')).toHaveCount(0)
+  expect(requests).toEqual(['/api/houses/225/photos/77/file'])
+  await page.getByRole('button', { name: 'Open details for Photo demo, Austin, TX' }).click()
+  await expect(page.getByRole('img', { name: 'Current cover of Photo demo, Austin, TX' })).toBeVisible()
+  await expect(page.getByRole('img', { name: 'Site photo 1' })).toBeVisible()
+  expect(requests.filter(path => path.endsWith('/77/file'))).toHaveLength(2)
+})
+
+test('authorized cover change updates detail and a freshly queried map card', async ({ page }) => {
+  const tilePath = fileURLToPath(new URL('../fixtures/map-tile.svg', import.meta.url))
+  await page.route('https://tile.openstreetmap.org/**', route => route.fulfill({
+    path: tilePath, contentType: 'image/svg+xml',
+  }))
+  let coverId = 77
+  let listReads = 0
+  let writes = 0
+  const imageReads: string[] = []
+  await page.route(url => url.pathname === '/api/houses', route => {
+    listReads += 1
+    return route.fulfill({ json: [{ id: 225, address: detail.address, community: detail.community,
+      stage: detail.stage, lat: detail.lat, lng: detail.lng,
+      coverPhotoUrl: `/api/houses/225/photos/${coverId}/file` }] })
+  })
+  await page.route('**/api/houses/225', route => route.fulfill({ json: { ...detail, coverPhotoId: coverId } }))
+  await page.route('**/api/houses/225/cover', async route => {
+    writes += 1
+    expect(route.request().method()).toBe('PUT')
+    expect(route.request().headers()['x-role']).toBe('ADMIN')
+    expect(route.request().postDataJSON()).toEqual({ photoId: 78 })
+    coverId = 78
+    await route.fulfill({ status: 200, json: { ...detail, coverPhotoId: coverId } })
+  })
+  await page.route('**/api/houses/225/photos/*/file', route => {
+    imageReads.push(new URL(route.request().url()).pathname)
+    return route.fulfill({ body: png, contentType: 'image/png' })
+  })
+
+  await page.goto('/map')
+  await expect(page.getByRole('img', { name: 'Cover of Photo demo, Austin, TX' })).toBeVisible()
+  await page.getByRole('button', { name: 'Open details for Photo demo, Austin, TX' }).click()
+  await expect(page.getByRole('img', { name: 'Current cover of Photo demo, Austin, TX' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Set photo 2 as cover' })).toHaveCount(0)
+  await page.getByLabel('Demo identity').selectOption('ADMIN')
+  await expect(page.getByRole('button', { name: 'Set photo 2 as cover' })).toBeEnabled()
+  await page.getByRole('button', { name: 'Set photo 2 as cover' }).click()
+  await expect(page.getByRole('region', { name: 'Cover photo details' }).getByText('Construction stage')).toBeVisible()
+  await expect(page.getByText(/House cover updated/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Set photo 2 as cover' })).toHaveCount(0)
+  expect(writes).toBe(1)
+
+  await page.getByRole('link', { name: 'Back to map' }).click()
+  await page.getByRole('button', { name: 'Back to list' }).click()
+  await expect(page.getByRole('img', { name: 'Cover of Photo demo, Austin, TX' })).toBeVisible()
+  expect(listReads).toBeGreaterThanOrEqual(2)
+  expect(imageReads.at(-1)).toBe('/api/houses/225/photos/78/file')
+})
+
+test('a cover write finishing after return to the map refreshes its card', async ({ page }) => {
+  const tilePath = fileURLToPath(new URL('../fixtures/map-tile.svg', import.meta.url))
+  await page.route('https://tile.openstreetmap.org/**', route => route.fulfill({
+    path: tilePath, contentType: 'image/svg+xml',
+  }))
+  let coverId = 77
+  let listReads = 0
+  let releaseWrite!: () => void
+  let writeStarted!: () => void
+  const started = new Promise<void>(resolve => { writeStarted = resolve })
+  const gate = new Promise<void>(resolve => { releaseWrite = resolve })
+  const imageReads: string[] = []
+  await page.route(url => url.pathname === '/api/houses', route => {
+    listReads += 1
+    return route.fulfill({ json: [{ id: 225, address: detail.address, community: detail.community,
+      stage: detail.stage, lat: detail.lat, lng: detail.lng,
+      coverPhotoUrl: `/api/houses/225/photos/${coverId}/file` }] })
+  })
+  await page.route('**/api/houses/225', route => route.fulfill({ json: { ...detail, coverPhotoId: coverId } }))
+  await page.route('**/api/houses/225/cover', async route => {
+    writeStarted()
+    await gate
+    coverId = 78
+    await route.fulfill({ status: 200, json: { ...detail, coverPhotoId: coverId } })
+  })
+  await page.route('**/api/houses/225/photos/*/file', route => {
+    imageReads.push(new URL(route.request().url()).pathname)
+    return route.fulfill({ body: png, contentType: 'image/png' })
+  })
+
+  await page.goto('/houses/225')
+  await page.getByLabel('Demo identity').selectOption('ADMIN')
+  await page.getByRole('button', { name: 'Set photo 2 as cover' }).click()
+  await started
+  await page.getByRole('link', { name: 'Back to map' }).click()
+  await expect(page.getByRole('img', { name: 'Cover of Photo demo, Austin, TX' })).toBeVisible()
+  expect(listReads).toBe(1)
+  releaseWrite()
+  await expect.poll(() => listReads).toBe(2)
+  await expect.poll(() => imageReads.at(-1)).toBe('/api/houses/225/photos/78/file')
 })
 
 test('protected cards and lightbox use one identity-scoped fetch per photo', async ({ page }) => {

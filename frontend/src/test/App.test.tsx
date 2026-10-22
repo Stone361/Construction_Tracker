@@ -54,7 +54,8 @@ describe('application routes', () => {
   it('supports opening the map route directly', () => {
     renderRoute('/map')
     expect(screen.getByRole('heading', { level: 1, name: 'Austin, Texas' })).toBeInTheDocument()
-    expect(screen.queryByRole('searchbox')).not.toBeInTheDocument()
+    expect(screen.getByRole('searchbox', { name: 'Search address' })).toBeInTheDocument()
+    expect(screen.queryByRole('searchbox', { name: 'City or ZIP code' })).not.toBeInTheDocument()
   })
 
   it('routes a direct house URL to the independent detail page', async () => {

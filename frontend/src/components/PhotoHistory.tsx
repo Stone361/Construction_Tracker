@@ -30,23 +30,46 @@ function PhotoVisual({ image, number, large = false }: { image: ProtectedImageSt
   </span>
 }
 
-export function PhotoHistory({ houseId, photos, canUpload = false, onUploadComplete, onRefreshDetails }: {
+interface PhotoHistoryProps {
   houseId: number
   photos: HousePhoto[]
   canUpload?: boolean
+  coverPhotoId?: number | null
+  onSetCover?: (photoId: number) => Promise<void>
   onUploadComplete?: (outcome: UploadOutcome) => void
   onRefreshDetails?: () => void
-}) {
+}
+
+type ImageAccess = ReturnType<typeof useProtectedImages>
+
+// Standalone usage keeps the existing image lifecycle. The detail page supplies
+// the same image access to its cover and history to fetch a selected cover once.
+export function PhotoHistory(props: PhotoHistoryProps) {
   const { identity, version } = useDemoIdentity()
-  const { imageFor, retry } = useProtectedImages(photos.map(photo => photo.url), identity, version)
+  const images = useProtectedImages(props.photos.map(photo => photo.url), identity, version)
+  return <PhotoHistoryContent {...props} images={images} />
+}
+
+export function PhotoHistoryContent({ houseId, photos, canUpload = false, coverPhotoId = null, onSetCover,
+  onUploadComplete, onRefreshDetails,
+  images: { imageFor, retry } }: PhotoHistoryProps & { images: ImageAccess }) {
   const railRef = useRef<HTMLOListElement | null>(null)
   const dialogRef = useRef<HTMLDivElement | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const [scrollable, setScrollable] = useState({ left: false, right: false })
   const [selectedPhotoId, setSelectedPhotoId] = useState<number | null>(null)
+  const mounted = useRef(false)
+  const coverSubmitting = useRef(false)
+  const [settingCoverId, setSettingCoverId] = useState<number | null>(null)
+  const [coverFeedback, setCoverFeedback] = useState<{ kind: 'success' | 'error'; message: string } | null>(null)
   const selectedIndex = photos.findIndex(photo => photo.id === selectedPhotoId)
   const selectedPhoto = selectedIndex >= 0 ? photos[selectedIndex] : null
   const isOpen = selectedPhoto !== null
+
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false }
+  }, [])
 
   useEffect(() => {
     const rail = railRef.current
@@ -108,6 +131,22 @@ export function PhotoHistory({ houseId, photos, canUpload = false, onUploadCompl
     if (rail) rail.scrollTo({ left: rail.scrollWidth, behavior: 'smooth' })
   }
 
+  const chooseCover = async (photoId: number) => {
+    if (!canUpload || !onSetCover || photoId === coverPhotoId || coverSubmitting.current) return
+    coverSubmitting.current = true
+    setSettingCoverId(photoId)
+    setCoverFeedback(null)
+    try {
+      await onSetCover(photoId)
+      if (mounted.current) setCoverFeedback({ kind: 'success', message: 'House cover updated. The map list will refresh when you return.' })
+    } catch (error) {
+      if (mounted.current) setCoverFeedback({ kind: 'error', message: error instanceof Error ? error.message : 'The cover could not be updated.' })
+    } finally {
+      coverSubmitting.current = false
+      if (mounted.current) setSettingCoverId(null)
+    }
+  }
+
   return <section className={styles.section} aria-labelledby="photo-history-heading">
     <div className={styles.header}>
       <div>
@@ -127,10 +166,21 @@ export function PhotoHistory({ houseId, photos, canUpload = false, onUploadCompl
       <ol className={styles.rail} ref={railRef} aria-label="House photo history">
         {photos.map((photo, index) => <li key={photo.id} className={styles.item}>
           <button type="button" className={styles.photoCard} aria-label={`Preview photo ${index + 1}`}
+            aria-describedby={photo.id === coverPhotoId ? `cover-label-${houseId}-${photo.id}` : undefined}
             onClick={event => { triggerRef.current = event.currentTarget; setSelectedPhotoId(photo.id) }}>
             <PhotoVisual image={imageFor(photo.url)} number={index + 1} />
-            <span className={styles.photoDetails}><span className={styles.photoNumber}>Photo {index + 1}</span><PhotoFacts photo={photo} /></span>
+            <span className={styles.photoDetails}><span className={styles.photoNumber}>Photo {index + 1}</span>
+              {photo.id === coverPhotoId && <span id={`cover-label-${houseId}-${photo.id}`}
+                className={styles.coverBadge}>Current cover</span>}
+              <PhotoFacts photo={photo} /></span>
           </button>
+          {canUpload && onSetCover && photo.id !== coverPhotoId && <button className={styles.setCover} type="button"
+            disabled={settingCoverId !== null} aria-busy={settingCoverId === photo.id}
+            aria-label={settingCoverId === photo.id ? `Setting photo ${index + 1} as cover`
+              : `Set photo ${index + 1} as cover`}
+            onClick={() => void chooseCover(photo.id)}>
+            {settingCoverId === photo.id ? 'Setting cover…' : 'Set as cover'}
+          </button>}
           {imageFor(photo.url).kind === 'error' && photo.url && <button className={styles.retry} type="button"
             onClick={() => retry(photo.url)}>Retry photo {index + 1}</button>}
         </li>)}
@@ -138,6 +188,13 @@ export function PhotoHistory({ houseId, photos, canUpload = false, onUploadCompl
           <PhotoUploadCard houseId={houseId} onComplete={onUploadComplete} onRefreshDetails={onRefreshDetails} />
         </li>}
       </ol>}
+    {coverFeedback && <div className={styles.coverFeedback} role={coverFeedback.kind === 'error' ? 'alert' : 'status'}>
+      <p>{coverFeedback.message}</p>
+      {coverFeedback.kind === 'error' && onRefreshDetails && <button type="button" onClick={() => {
+        setCoverFeedback(null)
+        onRefreshDetails()
+      }}>Refresh house details</button>}
+    </div>}
     {selectedPhoto && createPortal(
       <div className={styles.backdrop}>
         <div className={styles.dialog} role="dialog" aria-modal="true" aria-labelledby="photo-preview-heading"

@@ -8,7 +8,7 @@ import { MapPage } from '../pages/MapPage'
 import { DemoIdentityProvider } from '../app/DemoIdentityProvider'
 import { useDemoIdentity } from '../app/DemoIdentityContext'
 import { ApiError } from '../services/apiClient'
-import { getHouses } from '../services/houses'
+import { getAllHouses, getHouses } from '../services/houses'
 import type { HouseSummary } from '../services/houses'
 import { mapSnapshotFromState } from '../services/mapNavigation'
 import type { MapSnapshot } from '../services/mapNavigation'
@@ -43,12 +43,12 @@ vi.mock('../components/map/MapFocusTarget', () => ({
 }))
 vi.mock('../services/houses', async importOriginal => {
   const original = await importOriginal<typeof import('../services/houses')>()
-  return { ...original, getHouses: vi.fn() }
+  return { ...original, getHouses: vi.fn(), getAllHouses: vi.fn() }
 })
 
 function house(id: number, overrides: Partial<HouseSummary> = {}): HouseSummary {
   return { id, address: `${id} Main St`, permitNo: `P-${id}`, community: 'Austin Council District 8',
-    stage: 'FOUNDATION', lastPhotoBusinessDate: null, lat: 30 + id / 100, lng: -97,
+    stage: 'FOUNDATION', lastPhotoBusinessDate: null, coverPhotoUrl: null, lat: 30 + id / 100, lng: -97,
     ...overrides }
 }
 
@@ -73,6 +73,8 @@ function IdentityCycle() {
 beforeEach(() => {
   sessionStorage.clear()
   vi.mocked(getHouses).mockReset()
+  vi.mocked(getAllHouses).mockReset()
+  vi.mocked(getAllHouses).mockResolvedValue([])
 })
 
 describe('map house data and selection', () => {
@@ -157,12 +159,84 @@ describe('map house data and selection', () => {
     expect(screen.getByText('Loading houses from the backend…')).toBeInTheDocument()
     resolve([house(1), house(2, { lastPhotoBusinessDate: '2026-10-20', lat: null, lng: null })])
     expect(await screen.findByText('2 houses in view · 1 map marker')).toBeInTheDocument()
-    const list = screen.getByRole('list', { name: 'Houses sorted by latest photo business date' })
+    const list = screen.getByRole('list', { name: 'House cards' })
     expect(within(list).getAllByRole('button', { name: /^View \d+ Main St$/ }).map(button => button.textContent)).toEqual([
       expect.stringContaining('2 Main St'), expect.stringContaining('1 Main St'),
     ])
     expect(within(list).getByRole('button', { name: 'View 2 Main St' })).toHaveTextContent('Location unavailable')
     expect(getHouses).toHaveBeenCalledOnce()
+  })
+
+  it('combines address, real area and stage on the loaded view for cards and markers', async () => {
+    const user = userEvent.setup()
+    const allHouses = [
+      house(1, { address: '8023 NW St', community: 'Austin Council District 8', stage: 'FOUNDATION' }),
+      house(2, { address: '8023 SW St', community: 'Austin Council District 5', stage: 'FRAMING' }),
+      house(3, { address: '8110 Oak Ave', community: 'Austin Council District 8', stage: 'FRAMING' }),
+    ]
+    vi.mocked(getHouses).mockResolvedValue(allHouses)
+    vi.mocked(getAllHouses).mockResolvedValue(allHouses)
+    renderMap()
+    expect(await screen.findByText('3 houses in view · 3 map markers')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'House Explorer' })).toBeInTheDocument()
+    expect(screen.queryByText('Search and filters cover all houses; clear them to browse the current map view.')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Clear filters' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Community / Area')).toHaveValue('')
+    await user.type(screen.getByRole('searchbox', { name: 'Search address' }), '8023')
+    expect(await screen.findByText('2 houses found · 2 map markers')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Clear filters' })).toBeInTheDocument()
+    await user.selectOptions(screen.getByLabelText('Community / Area'), 'Austin Council District 5')
+    expect(screen.getByText('1 house found · 1 map marker')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'View 8023 SW St' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Map marker for house 1' })).not.toBeInTheDocument()
+    await user.selectOptions(screen.getByLabelText('Construction stage'), 'FOUNDATION')
+    expect(screen.getByText('No houses match these filters.')).toBeInTheDocument()
+    await user.selectOptions(screen.getByLabelText('Construction stage'), '')
+    expect(screen.getByRole('button', { name: 'View 8023 SW St' })).toBeInTheDocument()
+    await user.selectOptions(screen.getByLabelText('Community / Area'), '')
+    expect(screen.getByText('2 houses found · 2 map markers')).toBeInTheDocument()
+    expect(getHouses).toHaveBeenCalledOnce()
+    await user.click(screen.getByRole('button', { name: 'Clear filters' }))
+    expect(screen.getByRole('searchbox', { name: 'Search address' })).toHaveValue('')
+    expect(screen.getByLabelText('Community / Area')).toHaveValue('')
+    expect(screen.getByLabelText('Construction stage')).toHaveValue('')
+    expect(screen.queryByRole('button', { name: 'Clear filters' })).not.toBeInTheDocument()
+    expect(await screen.findByText('3 houses in view · 3 map markers')).toBeInTheDocument()
+    expect(getHouses).toHaveBeenCalledTimes(2)
+  })
+
+  it('searches beyond the current bounds, keeps results while the map moves, then resumes bounded browsing', async () => {
+    const user = userEvent.setup()
+    vi.mocked(getHouses).mockResolvedValueOnce([house(1)])
+      .mockResolvedValueOnce([house(2, { address: 'House in moved view' })])
+    vi.mocked(getAllHouses).mockResolvedValue([
+      house(1), house(99, { address: 'Remote Pine Road', lat: 40, lng: -100 }),
+      house(100, { address: 'No coordinate home', lat: null, lng: null }),
+    ])
+    renderMap()
+    expect(await screen.findByText('1 house in view · 1 map marker')).toBeInTheDocument()
+    await user.type(screen.getByRole('searchbox', { name: 'Search address' }), 'REMOTE')
+    expect(await screen.findByText('1 house found · 1 map marker')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'View Remote Pine Road' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Map marker for house 99' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'View Remote Pine Road' }))
+    expect(screen.getByTestId('map-focus')).toHaveTextContent('40,-100')
+    await user.click(screen.getByRole('button', { name: 'Back to list' }))
+    await user.click(screen.getByRole('button', { name: 'Finish map move' }))
+    expect(screen.getByRole('button', { name: 'View Remote Pine Road' })).toBeInTheDocument()
+    expect(getHouses).toHaveBeenCalledOnce()
+    await user.clear(screen.getByRole('searchbox', { name: 'Search address' }))
+    expect(await screen.findByText('House in moved view')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Map marker for house 99' })).not.toBeInTheDocument()
+    expect(getHouses).toHaveBeenCalledTimes(2)
+    expect(vi.mocked(getHouses).mock.calls[1]?.[0].bounds.minLat).toBe(30.2)
+
+    await user.type(screen.getByRole('searchbox', { name: 'Search address' }), 'No coordinate')
+    expect(await screen.findByText('1 house found · 0 map markers')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'View No coordinate home' }))
+    expect(screen.getByRole('heading', { name: 'No coordinate home' })).toBeInTheDocument()
+    expect(screen.getByTestId('map-focus')).toHaveTextContent('none')
+    expect(getHouses).toHaveBeenCalledTimes(2)
   })
 
   it('selects from a card, highlights one marker, and returns to the list without another request', async () => {
@@ -180,7 +254,7 @@ describe('map house data and selection', () => {
     expect(header).toContainElement(screen.getByText('MAP WORKSPACE'))
     expect(header?.parentElement?.lastElementChild).toContainElement(screen.getByRole('heading', { name: '2 Main St' }))
     await user.click(back)
-    expect(screen.getByRole('list', { name: 'Houses sorted by latest photo business date' })).toBeInTheDocument()
+    expect(screen.getByRole('list', { name: 'House cards' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Back to list' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Map marker for house 2' })).toHaveAttribute('data-selected', 'false')
     expect(screen.getByLabelText('Construction stage')).toHaveValue('')
@@ -219,7 +293,7 @@ describe('map house data and selection', () => {
   it('shows an honest empty response', async () => {
     vi.mocked(getHouses).mockResolvedValue([])
     renderMap()
-    expect(await screen.findByText('No houses match this map view and stage.')).toBeInTheDocument()
+    expect(await screen.findByText('No houses in the current map view.')).toBeInTheDocument()
     expect(screen.queryByRole('list')).not.toBeInTheDocument()
   })
 
@@ -228,7 +302,7 @@ describe('map house data and selection', () => {
     renderMap()
     expect(await screen.findByRole('alert')).toHaveTextContent('House data could not be loaded.')
     await userEvent.click(screen.getByRole('button', { name: 'Retry house data' }))
-    expect(await screen.findByText('No houses match this map view and stage.')).toBeInTheDocument()
+    expect(await screen.findByText('No houses in the current map view.')).toBeInTheDocument()
     expect(getHouses).toHaveBeenCalledTimes(2)
   })
 
@@ -246,28 +320,26 @@ describe('map house data and selection', () => {
     expect(vi.mocked(getHouses).mock.calls[1]?.[0].bounds.minLat).toBe(30.2)
   })
 
-  it('ignores a stale response after a rapid stage change and clears a selection excluded by the new result', async () => {
+  it('filters the loaded view without another request and clears a selection excluded by stage', async () => {
     const user = userEvent.setup()
-    let resolveStale!: (value: HouseSummary[]) => void
-    vi.mocked(getHouses).mockResolvedValueOnce([house(1)])
-      .mockReturnValueOnce(new Promise(done => { resolveStale = done }))
-      .mockResolvedValueOnce([house(2, { stage: 'FRAMING' })])
+    const allHouses = [house(1), house(2, { stage: 'FRAMING' })]
+    vi.mocked(getHouses).mockResolvedValue(allHouses)
+    vi.mocked(getAllHouses).mockResolvedValue(allHouses)
     renderMap()
     await user.click(await screen.findByRole('button', { name: 'View 1 Main St' }))
-    await user.selectOptions(screen.getByLabelText('Construction stage'), 'FOUNDATION')
     await user.selectOptions(screen.getByLabelText('Construction stage'), 'FRAMING')
     expect(await screen.findByText('2 Main St')).toBeInTheDocument()
-    resolveStale([house(1)])
     expect(screen.getByText('2 Main St')).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: '1 Main St' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Map marker for house 1' })).not.toBeInTheDocument()
-    expect(vi.mocked(getHouses).mock.calls[2]?.[0].stage).toBe('FRAMING')
-    expect(vi.mocked(getHouses).mock.calls[1]?.[1]?.aborted).toBe(true)
+    expect(vi.mocked(getHouses).mock.calls[0]?.[0].stage).toBeNull()
+    expect(getHouses).toHaveBeenCalledOnce()
   })
 
   it('keeps a selected house while it remains in a new result', async () => {
     const user = userEvent.setup()
     vi.mocked(getHouses).mockResolvedValue([house(1)])
+    vi.mocked(getAllHouses).mockResolvedValue([house(1)])
     renderMap()
     await user.click(await screen.findByRole('button', { name: 'View 1 Main St' }))
     await user.selectOptions(screen.getByLabelText('Construction stage'), 'FOUNDATION')
@@ -279,6 +351,7 @@ describe('map house data and selection', () => {
     const user = userEvent.setup()
     const onSnapshotChange = vi.fn()
     vi.mocked(getHouses).mockResolvedValue([house(1)])
+    vi.mocked(getAllHouses).mockResolvedValue([house(1)])
     function DetailProbe() {
       const { id } = useParams()
       const location = useLocation()
@@ -294,12 +367,18 @@ describe('map house data and selection', () => {
     await user.click(screen.getByRole('button', { name: 'Finish map move' }))
     await screen.findByRole('button', { name: 'View 1 Main St' })
     await user.selectOptions(screen.getByLabelText('Construction stage'), 'FOUNDATION')
+    await user.selectOptions(screen.getByLabelText('Community / Area'), 'Austin Council District 8')
+    await user.type(screen.getByRole('searchbox', { name: 'Search address' }), 'main')
     await screen.findByRole('button', { name: 'View 1 Main St' })
     await user.click(screen.getByRole('button', { name: 'Open details for 1 Main St' }))
-    expect(onSnapshotChange).toHaveBeenCalledWith(expect.objectContaining({ stage: 'FOUNDATION', selectedHouseId: 1 }))
+    expect(onSnapshotChange).toHaveBeenCalledWith(expect.objectContaining({
+      stage: 'FOUNDATION', community: 'Austin Council District 8', addressSearch: 'main', selectedHouseId: 1,
+    }))
     expect(screen.getByText('Detail ID: 1 · stage: FOUNDATION · selected: 1')).toBeInTheDocument()
     await user.click(screen.getByRole('link', { name: 'Back to map' }))
     expect(screen.getByLabelText('Construction stage')).toHaveValue('FOUNDATION')
+    expect(screen.getByLabelText('Community / Area')).toHaveValue('Austin Council District 8')
+    expect(screen.getByRole('searchbox', { name: 'Search address' })).toHaveValue('main')
     expect(await screen.findByRole('heading', { name: '1 Main St' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: /Open full house details/ }))
     expect(screen.getByText('Detail ID: 1 · stage: FOUNDATION · selected: 1')).toBeInTheDocument()
@@ -308,6 +387,7 @@ describe('map house data and selection', () => {
   it('preserves the map state when browser history goes back from details', async () => {
     const user = userEvent.setup()
     vi.mocked(getHouses).mockResolvedValue([house(1)])
+    vi.mocked(getAllHouses).mockResolvedValue([house(1)])
     function Journey() {
       const [snapshot, setSnapshot] = useState<MapSnapshot | null>(null)
       const navigate = useNavigate()

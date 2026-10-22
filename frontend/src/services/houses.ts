@@ -28,6 +28,7 @@ export interface HouseSummary {
   community: string | null
   stage: ConstructionStage | null
   lastPhotoBusinessDate: string | null
+  coverPhotoUrl: string | null
   lat: number | null
   lng: number | null
 }
@@ -98,6 +99,10 @@ export function parseHouseList(data: unknown): HouseSummary[] {
       community: optionalText(house.community),
       stage: stage(house.stage),
       lastPhotoBusinessDate: photoDate(house.lastPhotoBusinessDate),
+      coverPhotoUrl: typeof house.coverPhotoUrl === 'string' &&
+        /^\/api\/houses\/[1-9]\d*\/photos\/[1-9]\d*\/file$/.test(house.coverPhotoUrl) &&
+        house.coverPhotoUrl.startsWith(`/api/houses/${house.id}/photos/`)
+        ? house.coverPhotoUrl : null,
       lat: coordinate(house.lat, 90),
       lng: coordinate(house.lng, 180),
     }
@@ -115,6 +120,10 @@ export function houseListPath(query: HouseQuery): string {
 
 export async function getHouses(query: HouseQuery, signal: AbortSignal | undefined, identity: DemoIdentity): Promise<HouseSummary[]> {
   return parseHouseList(await getJson(houseListPath(query), signal, identity))
+}
+
+export async function getAllHouses(signal: AbortSignal | undefined, identity: DemoIdentity): Promise<HouseSummary[]> {
+  return parseHouseList(await getJson('/api/houses', signal, identity))
 }
 
 export async function getCommunityNames(identity: DemoIdentity, signal?: AbortSignal): Promise<string[]> {

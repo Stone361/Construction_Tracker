@@ -1,9 +1,11 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { HouseDetailPage } from '../pages/HouseDetailPage'
 import { getHouseDetail } from '../services/houseDetail'
+import { setHouseCover } from '../services/houseCover'
+import { advanceHouse } from '../services/advanceHouse'
 import type { HouseDetail } from '../services/houseDetail'
 import type { MapSnapshot } from '../services/mapNavigation'
 import { ApiError } from '../services/apiClient'
@@ -14,6 +16,8 @@ vi.mock('../services/houseDetail', async importOriginal => {
   const original = await importOriginal<typeof import('../services/houseDetail')>()
   return { ...original, getHouseDetail: vi.fn() }
 })
+vi.mock('../services/houseCover', () => ({ setHouseCover: vi.fn() }))
+vi.mock('../services/advanceHouse', () => ({ advanceHouse: vi.fn() }))
 
 const house: HouseDetail = {
   id: 12, permitNo: 'P-12', address: '12 Main St', community: 'Austin Council District 8',
@@ -49,19 +53,269 @@ function IdentityControls() {
   </>
 }
 
-function renderDetailWithIdentity() {
+function renderDetailWithIdentity(onStageWriteSettled?: () => void) {
   return render(<DemoIdentityProvider><MemoryRouter initialEntries={['/houses/12']}>
-    <IdentityControls /><Routes><Route path="houses/:id" element={<HouseDetailPage />} /></Routes>
+    <IdentityControls /><Routes><Route path="houses/:id"
+      element={<HouseDetailPage {...(onStageWriteSettled ? { onStageWriteSettled } : {})} />} /></Routes>
   </MemoryRouter></DemoIdentityProvider>)
 }
 
 beforeEach(() => {
   sessionStorage.clear()
   vi.mocked(getHouseDetail).mockReset()
+  vi.mocked(setHouseCover).mockReset()
+  vi.mocked(advanceHouse).mockReset()
 })
 afterEach(() => { vi.clearAllMocks(); vi.unstubAllGlobals() })
 
 describe('house detail page', () => {
+  const twoPhotos: HouseDetail = { ...house, coverPhotoId: 8, photos: [
+    { id: 8, stage: 'FOUNDATION', takenAt: null, uploadedAt: null, businessDate: null, url: null },
+    { id: 9, stage: 'LAND_CLEARING', locationStatus: 'SUSPECT', takenAt: null, uploadedAt: null, businessDate: null, url: null },
+  ] }
+  const eligibleHouse: HouseDetail = { ...house, photos: [{ id: 91, stage: 'FOUNDATION',
+    locationStatus: 'UNKNOWN', takenAt: null, uploadedAt: null, businessDate: null, url: null }] }
+  const useAdmin = () => sessionStorage.setItem(identityStorageKey, JSON.stringify({ version: identityStorageVersion,
+    identity: { user: 'frontend-demo', role: 'ADMIN', community: null } }))
+
+  it('cancels before POST and advances only after confirmation, then refetches the detail', async () => {
+    useAdmin()
+    vi.mocked(getHouseDetail).mockResolvedValueOnce(eligibleHouse)
+      .mockResolvedValueOnce({ ...eligibleHouse, stage: 'FRAMING' })
+    vi.mocked(advanceHouse).mockResolvedValue()
+    const user = userEvent.setup()
+    renderDetailWithIdentity()
+    await user.click(await screen.findByRole('button', { name: 'Advance to Framing' }))
+    const dialog = screen.getByRole('dialog', { name: 'Advance construction stage?' })
+    expect(dialog).toHaveTextContent('Foundation → Framing')
+    expect(dialog).toHaveTextContent('cannot move a house back')
+    expect(within(dialog).getByRole('button', { name: 'Cancel' })).toHaveFocus()
+    expect(advanceHouse).not.toHaveBeenCalled()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Advance to Framing' })).toHaveFocus()
+    expect(advanceHouse).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Advance to Framing' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm advance' }))
+    expect(advanceHouse).toHaveBeenCalledWith(12, 'FOUNDATION', 'FRAMING',
+      expect.objectContaining({ role: 'ADMIN' }), expect.any(Function))
+    expect(await screen.findByRole('status', { name: '' })).toHaveTextContent('Advance accepted')
+    await waitFor(() => expect(getHouseDetail).toHaveBeenCalledTimes(2))
+    expect(within(await screen.findByRole('region', { name: 'Construction progress' })).getByText('Current stage')
+      .parentElement).toHaveTextContent('Framing')
+  })
+
+  it('blocks duplicate confirmation while a submitted write is pending', async () => {
+    useAdmin()
+    vi.mocked(getHouseDetail).mockResolvedValue(eligibleHouse)
+    let finish!: () => void
+    vi.mocked(advanceHouse).mockReturnValue(new Promise(resolve => { finish = resolve }))
+    const user = userEvent.setup()
+    renderDetailWithIdentity()
+    await user.click(await screen.findByRole('button', { name: 'Advance to Framing' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm advance' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Submitting stage advance/ })).toBeDisabled()
+    expect(advanceHouse).toHaveBeenCalledTimes(1)
+    await act(async () => finish())
+    await waitFor(() => expect(getHouseDetail).toHaveBeenCalledTimes(2))
+    expect(advanceHouse).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    { status: 409, reason: '当前施工阶段已变化', refreshed: { ...eligibleHouse, stage: 'FRAMING' as const } },
+    { status: 422, reason: '当前施工阶段缺少非 SUSPECT 的照片', refreshed: { ...eligibleHouse, photos: [] } },
+  ])('shows HTTP $status business reason and reloads the authoritative detail', async ({ status, reason, refreshed }) => {
+    useAdmin()
+    vi.mocked(getHouseDetail).mockResolvedValueOnce(eligibleHouse).mockResolvedValueOnce(refreshed)
+    vi.mocked(advanceHouse).mockRejectedValue(new ApiError(`${reason} (HTTP ${status}).`, status))
+    const user = userEvent.setup()
+    renderDetailWithIdentity()
+    await user.click(await screen.findByRole('button', { name: 'Advance to Framing' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm advance' }))
+    expect(await screen.findByText(new RegExp(reason))).toBeInTheDocument()
+    await waitFor(() => expect(getHouseDetail).toHaveBeenCalledTimes(2))
+    if (status === 422) expect(screen.getByRole('button', { name: 'Advance unavailable' })).toBeDisabled()
+    else expect(screen.getByRole('region', { name: 'Construction progress' })).toHaveTextContent('Framing')
+  })
+
+  it('treats a network result as unknown, rereads details and never retries the POST', async () => {
+    useAdmin()
+    vi.mocked(getHouseDetail).mockResolvedValue(eligibleHouse)
+    vi.mocked(advanceHouse).mockRejectedValue(new ApiError('The stage advance result is unknown.'))
+    const user = userEvent.setup()
+    renderDetailWithIdentity()
+    await user.click(await screen.findByRole('button', { name: 'Advance to Framing' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm advance' }))
+    expect(await screen.findByText(/The advance result is unknown/)).toBeInTheDocument()
+    await waitFor(() => expect(getHouseDetail).toHaveBeenCalledTimes(2))
+    expect(advanceHouse).toHaveBeenCalledTimes(1)
+  })
+
+  it('rereads again if a timed-out POST later settles, without sending it again', async () => {
+    useAdmin()
+    vi.mocked(getHouseDetail).mockResolvedValue(eligibleHouse)
+    let lateSettle!: () => void
+    vi.mocked(advanceHouse).mockImplementation((_id, _from, _to, _identity, onLateSettle) => {
+      if (!onLateSettle) throw new Error('Expected late settlement callback')
+      lateSettle = onLateSettle
+      return Promise.reject(new ApiError('The stage advance result is unknown.'))
+    })
+    const listInvalidated = vi.fn()
+    const user = userEvent.setup()
+    renderDetailWithIdentity(listInvalidated)
+    await user.click(await screen.findByRole('button', { name: 'Advance to Framing' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm advance' }))
+    await waitFor(() => expect(getHouseDetail).toHaveBeenCalledTimes(2))
+    await act(async () => lateSettle())
+    await waitFor(() => expect(getHouseDetail).toHaveBeenCalledTimes(3))
+    expect(advanceHouse).toHaveBeenCalledTimes(1)
+    expect(listInvalidated).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([401, 403])('shows HTTP %i as an identity or permission error', async status => {
+    useAdmin()
+    vi.mocked(getHouseDetail).mockResolvedValue(eligibleHouse)
+    vi.mocked(advanceHouse).mockRejectedValue(new ApiError(`Permission error (HTTP ${status}).`, status))
+    const user = userEvent.setup()
+    renderDetailWithIdentity()
+    await user.click(await screen.findByRole('button', { name: 'Advance to Framing' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm advance' }))
+    expect(await screen.findByText(`Permission error (HTTP ${status}).`)).toBeInTheDocument()
+    await waitFor(() => expect(getHouseDetail).toHaveBeenCalledTimes(2))
+  })
+
+  it('does not apply an old identity advance outcome to the new identity', async () => {
+    useAdmin()
+    vi.mocked(getHouseDetail).mockResolvedValue(eligibleHouse)
+    let finish!: () => void
+    vi.mocked(advanceHouse).mockReturnValue(new Promise(resolve => { finish = resolve }))
+    const user = userEvent.setup()
+    renderDetailWithIdentity()
+    await user.click(await screen.findByRole('button', { name: 'Advance to Framing' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm advance' }))
+    await user.click(screen.getByRole('button', { name: 'Use Viewer' }))
+    expect(screen.queryByRole('button', { name: 'Advance to Framing' })).not.toBeInTheDocument()
+    await act(async () => finish())
+    await waitFor(() => expect(getHouseDetail).toHaveBeenCalledTimes(3))
+    expect(vi.mocked(getHouseDetail).mock.calls[2]?.[2]?.role).toBe('VIEWER')
+    expect(screen.queryByText(/Advance accepted/)).not.toBeInTheDocument()
+  })
+
+  it('does not apply a previous house advance result to a different detail route', async () => {
+    useAdmin()
+    vi.mocked(getHouseDetail).mockResolvedValueOnce(eligibleHouse)
+      .mockResolvedValueOnce({ ...house, id: 13, address: '13 Main St', stage: 'CO_READY' })
+    let finish!: () => void
+    vi.mocked(advanceHouse).mockReturnValue(new Promise(resolve => { finish = resolve }))
+    const user = userEvent.setup()
+    render(<DemoIdentityProvider><MemoryRouter initialEntries={['/houses/12']}>
+      <Routes><Route path="houses/:id" element={<><HouseDetailPage /><RouteSwitcher /></>} /></Routes>
+    </MemoryRouter></DemoIdentityProvider>)
+    await user.click(await screen.findByRole('button', { name: 'Advance to Framing' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm advance' }))
+    await user.click(screen.getByRole('link', { name: 'Next house' }))
+    expect(await screen.findByRole('heading', { name: '13 Main St' })).toBeInTheDocument()
+    await act(async () => finish())
+    expect(screen.getByRole('heading', { name: '13 Main St' })).toBeInTheDocument()
+    expect(screen.queryByText(/Advance accepted/)).not.toBeInTheDocument()
+    expect(getHouseDetail).toHaveBeenCalledTimes(2)
+  })
+
+  it('marks the current cover, prevents duplicate setting and applies the returned detail', async () => {
+    sessionStorage.setItem(identityStorageKey, JSON.stringify({ version: identityStorageVersion,
+      identity: { user: 'frontend-demo', role: 'ADMIN', community: null } }))
+    vi.mocked(getHouseDetail).mockResolvedValue(twoPhotos)
+    let finish!: (value: HouseDetail) => void
+    vi.mocked(setHouseCover).mockReturnValue(new Promise(resolve => { finish = resolve }))
+    renderDetailWithIdentity()
+    await screen.findByRole('heading', { name: '12 Main St' })
+    expect(screen.getByRole('button', { name: 'Preview photo 1' })).toHaveAccessibleDescription('Current cover')
+    expect(screen.queryByRole('button', { name: 'Set photo 1 as cover' })).not.toBeInTheDocument()
+    const setButton = screen.getByRole('button', { name: 'Set photo 2 as cover' })
+    await userEvent.click(setButton)
+    expect(setButton).toBeDisabled()
+    expect(setButton).toHaveTextContent('Setting cover')
+    expect(setButton).toHaveAttribute('aria-busy', 'true')
+    expect(setHouseCover).toHaveBeenCalledWith(12, 9, expect.objectContaining({ role: 'ADMIN' }))
+    await act(async () => finish({ ...twoPhotos, coverPhotoId: 9 }))
+    expect(await screen.findByText(/House cover updated/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Set photo 2 as cover' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Set photo 1 as cover' })).toBeEnabled()
+    expect(within(screen.getByRole('button', { name: 'Preview photo 2' })).getByText('Current cover')).toBeInTheDocument()
+    expect(getHouseDetail).toHaveBeenCalledTimes(1)
+    expect(setHouseCover).toHaveBeenCalledTimes(1)
+  })
+
+  it('shows cover actions only for Admin and an exact matching Site Manager community', async () => {
+    vi.mocked(getHouseDetail).mockResolvedValue(twoPhotos)
+    const user = userEvent.setup()
+    renderDetailWithIdentity()
+    await screen.findByRole('heading', { name: '12 Main St' })
+    expect(screen.queryByRole('button', { name: 'Set photo 2 as cover' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Use Admin' }))
+    expect(await screen.findByRole('button', { name: 'Set photo 2 as cover' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'Manage own community' }))
+    expect(await screen.findByRole('button', { name: 'Set photo 2 as cover' })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: 'Manage other community' }))
+    await screen.findByRole('heading', { name: '12 Main St' })
+    expect(screen.queryByRole('button', { name: 'Set photo 2 as cover' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Manage lowercase community' }))
+    await screen.findByRole('heading', { name: '12 Main St' })
+    expect(screen.queryByRole('button', { name: 'Set photo 2 as cover' })).not.toBeInTheDocument()
+  })
+
+  it('keeps an error visible with a refresh option without changing the current cover', async () => {
+    sessionStorage.setItem(identityStorageKey, JSON.stringify({ version: identityStorageVersion,
+      identity: { user: 'frontend-demo', role: 'ADMIN', community: null } }))
+    vi.mocked(getHouseDetail).mockResolvedValue(twoPhotos)
+    vi.mocked(setHouseCover).mockRejectedValue(new ApiError('Photo belongs to another house (HTTP 422).', 422))
+    renderDetailWithIdentity()
+    await screen.findByRole('button', { name: 'Set photo 2 as cover' })
+    await userEvent.click(screen.getByRole('button', { name: 'Set photo 2 as cover' }))
+    expect(await screen.findByText(/Photo belongs to another house \(HTTP 422\)/)).toBeInTheDocument()
+    expect(within(screen.getByRole('button', { name: 'Preview photo 1' })).getByText('Current cover')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh house details' }))
+    await waitFor(() => expect(getHouseDetail).toHaveBeenCalledTimes(2))
+  })
+
+  it('ignores a previous identity cover result after switching back to Viewer', async () => {
+    sessionStorage.setItem(identityStorageKey, JSON.stringify({ version: identityStorageVersion,
+      identity: { user: 'frontend-demo', role: 'ADMIN', community: null } }))
+    vi.mocked(getHouseDetail).mockResolvedValue(twoPhotos)
+    let finish!: (value: HouseDetail) => void
+    vi.mocked(setHouseCover).mockReturnValue(new Promise(resolve => { finish = resolve }))
+    const user = userEvent.setup()
+    renderDetailWithIdentity()
+    await user.click(await screen.findByRole('button', { name: 'Set photo 2 as cover' }))
+    await user.click(screen.getByRole('button', { name: 'Use Viewer' }))
+    expect(screen.queryByRole('button', { name: 'Set photo 2 as cover' })).not.toBeInTheDocument()
+    await act(async () => finish({ ...twoPhotos, coverPhotoId: 9 }))
+    await waitFor(() => expect(getHouseDetail).toHaveBeenCalledTimes(3))
+    expect(vi.mocked(getHouseDetail).mock.calls[2]?.[2]?.role).toBe('VIEWER')
+    expect(within(screen.getByRole('button', { name: 'Preview photo 1' })).getByText('Current cover')).toBeInTheDocument()
+    expect(screen.queryByText(/House cover updated/)).not.toBeInTheDocument()
+  })
+
+  it('does not apply a late cover result to a different house route', async () => {
+    sessionStorage.setItem(identityStorageKey, JSON.stringify({ version: identityStorageVersion,
+      identity: { user: 'frontend-demo', role: 'ADMIN', community: null } }))
+    vi.mocked(getHouseDetail).mockResolvedValueOnce(twoPhotos)
+      .mockResolvedValueOnce({ ...house, id: 13, address: '13 Main St', coverPhotoId: null, photos: [] })
+    let finish!: (value: HouseDetail) => void
+    vi.mocked(setHouseCover).mockReturnValue(new Promise(resolve => { finish = resolve }))
+    const user = userEvent.setup()
+    render(<DemoIdentityProvider><MemoryRouter initialEntries={['/houses/12']}>
+      <Routes><Route path="houses/:id" element={<><HouseDetailPage /><RouteSwitcher /></>} /></Routes>
+    </MemoryRouter></DemoIdentityProvider>)
+    await user.click(await screen.findByRole('button', { name: 'Set photo 2 as cover' }))
+    await user.click(screen.getByRole('link', { name: 'Next house' }))
+    expect(await screen.findByRole('heading', { name: '13 Main St' })).toBeInTheDocument()
+    await act(async () => finish({ ...twoPhotos, coverPhotoId: 9 }))
+    expect(screen.getByText('No cover selected. The image area is a placeholder.')).toBeInTheDocument()
+    expect(screen.queryByText(/House cover updated/)).not.toBeInTheDocument()
+    expect(getHouseDetail).toHaveBeenCalledTimes(2)
+  })
   it.each([{ status: 201, stale: false }, { status: 200, stale: false }, { status: 200, stale: true }] as const)(
     'shows HTTP $status outcome and reconciles photo history (stale: $stale)', async ({ status, stale }) => {
     sessionStorage.setItem(identityStorageKey, JSON.stringify({ version: identityStorageVersion,
@@ -161,6 +415,7 @@ describe('house detail page', () => {
     await user.click(screen.getByRole('button', { name: 'Use Admin' }))
     expect(await screen.findByRole('button', { name: 'Upload photo' })).toBeEnabled()
     expect(screen.getByText('No site photos yet.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Set photo .* as cover/ })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Manage own community' }))
     expect(await screen.findByRole('button', { name: 'Upload photo' })).toBeEnabled()
     expect(screen.getByText(/Demo manager area: Austin Council District 8.*Management entry is available/)).toBeInTheDocument()
@@ -244,14 +499,117 @@ describe('house detail page', () => {
     expect(await screen.findByRole('heading', { name: '12 Main St' })).toBeInTheDocument()
     expect(screen.getByText('P-12')).toBeInTheDocument()
     expect(screen.getByText('Austin Council District 8')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'https://example.org/permit/12' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Current cover' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'https://example.org/permit/12' })).toBeVisible()
+    expect(screen.getByRole('heading', { name: 'Cover photo details' })).toBeInTheDocument()
     expect(screen.getByText(/No cover selected/)).toBeInTheDocument()
     expect(screen.getByText('No site photos yet.')).toBeInTheDocument()
     first.unmount()
     renderDetail()
     await screen.findByRole('heading', { name: '12 Main St' })
     expect(getHouseDetail).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the two main cards focused and shows public provenance directly', async () => {
+    vi.mocked(getHouseDetail).mockResolvedValue({ ...house, photos: [
+      { id: 8, stage: 'FOUNDATION', takenAt: null, uploadedAt: '2026-10-22T00:00:00Z', businessDate: null, url: null },
+      { id: 9, stage: 'FOUNDATION', takenAt: null, uploadedAt: '2026-09-01T00:00:00Z', businessDate: '2026-01-05', url: null },
+    ] })
+    renderDetail()
+    const property = await screen.findByRole('region', { name: 'Property' })
+    const record = screen.getByRole('region', { name: 'Record and location' })
+    expect(within(property).getAllByRole('term')).toHaveLength(4)
+    expect(within(record).getAllByRole('term')).toHaveLength(4)
+    expect(within(record).getByText('Map coordinates').parentElement).toHaveTextContent('30.267200, -97.743100')
+    expect(within(record).getByText('Source URL').parentElement).toHaveTextContent('Fetched at · UTC: Jan 1, 2026')
+    expect(within(record).getByRole('link', { name: 'https://example.org/permit/12' })).toBeVisible()
+    expect(within(record).getByText('Record created').parentElement).toHaveTextContent('By importer')
+    expect(within(record).getByText('Record created').parentElement).toHaveTextContent('Jan 2, 2026')
+    expect(within(record).getByText('Latest photo business date · Chicago').parentElement).toHaveTextContent('Jan 5, 2026')
+    expect(record).not.toHaveTextContent('Updated at')
+    expect(record).not.toHaveTextContent('Source type')
+  })
+
+  it('shows unavailable source fields for a manual house without inventing photo activity', async () => {
+    vi.mocked(getHouseDetail).mockResolvedValue({ ...house, sourceType: 'MANUAL', sourceUrl: null,
+      sourceFetchedAt: null, photos: [] })
+    renderDetail()
+    const record = await screen.findByRole('region', { name: 'Record and location' })
+    expect(within(record).getAllByRole('term')).toHaveLength(4)
+    expect(within(record).getByText('Source URL').parentElement).toHaveTextContent('Not available')
+    expect(within(record).getByText('Source URL').parentElement).toHaveTextContent('Fetched at · UTC: Not available')
+    expect(within(record).getByText('Latest photo business date · Chicago').parentElement).toHaveTextContent('No site photos yet')
+    expect(within(record).queryByRole('link')).not.toBeInTheDocument()
+  })
+
+  it('shares the selected cover image with photo history and does not infer a cover when none is set', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:cover-12')
+    URL.revokeObjectURL = vi.fn()
+    const file = '/api/houses/12/photos/8/file'
+    const withPhoto = { ...house, coverPhotoId: 8, photos: [{ id: 8, stage: 'FOUNDATION' as const,
+      takenAt: null, uploadedAt: null, businessDate: null, url: file }] }
+    vi.mocked(getHouseDetail).mockResolvedValueOnce(withPhoto)
+    const fetchMock = vi.fn().mockResolvedValue(new Response(new Blob(['image'], { type: 'image/png' }), {
+      status: 200, headers: { 'Content-Type': 'image/png' },
+    }))
+    vi.stubGlobal('fetch', fetchMock)
+    const view = renderDetail()
+    expect(await screen.findByRole('img', { name: 'Current cover of 12 Main St' })).toHaveAttribute('src', 'blob:cover-12')
+    expect(screen.getByRole('img', { name: 'Site photo 1' })).toHaveAttribute('src', 'blob:cover-12')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(file)
+    view.unmount()
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:cover-12')
+
+    vi.mocked(getHouseDetail).mockResolvedValueOnce({ ...withPhoto, coverPhotoId: null })
+    renderDetail()
+    await screen.findByRole('heading', { name: '12 Main St' })
+    expect(screen.queryByRole('img', { name: /Current cover/ })).not.toBeInTheDocument()
+    expect(screen.getByText(/No cover selected/)).toBeInTheDocument()
+  })
+
+  it('shows the selected photo capture, upload and photo-stage metadata without its ID', async () => {
+    vi.mocked(getHouseDetail).mockResolvedValue({ ...house, stage: 'FRAMING', coverPhotoId: 8,
+      photos: [{ id: 8, stage: 'LAND_CLEARING', takenAtSource: 'EXIF',
+        takenAt: '2026-01-02T03:04:05Z', uploadedAt: '2026-01-05T06:07:08Z',
+        businessDate: '2026-01-01', url: null }] })
+    renderDetail()
+    const cover = await screen.findByRole('region', { name: 'Cover photo details' })
+    expect(within(cover).getByText('Date taken').parentElement).toHaveTextContent('Jan 2, 2026')
+    expect(within(cover).getByText('Uploaded at').parentElement).toHaveTextContent('Jan 5, 2026')
+    expect(within(cover).getByText('Construction stage').parentElement).toHaveTextContent('Land clearing')
+    expect(cover).not.toHaveTextContent('Framing')
+    expect(cover).not.toHaveTextContent('#8')
+    expect(cover).not.toHaveTextContent('GPS')
+  })
+
+  it('does not present an upload-time fallback as an actual capture time', async () => {
+    vi.mocked(getHouseDetail).mockResolvedValue({ ...house, coverPhotoId: 8,
+      photos: [{ id: 8, stage: null, takenAtSource: 'UPLOAD',
+        takenAt: '2026-01-05T06:07:08Z', uploadedAt: '2026-01-05T06:07:08Z',
+        businessDate: null, url: null }] })
+    renderDetail()
+    const cover = await screen.findByRole('region', { name: 'Cover photo details' })
+    expect(within(cover).getByText('Date taken').parentElement).toHaveTextContent('Not available')
+    expect(within(cover).getByText('Uploaded at').parentElement).toHaveTextContent('Jan 5, 2026')
+    expect(within(cover).getByText('Construction stage').parentElement).toHaveTextContent('Not available')
+  })
+
+  it('keeps the placeholder and allows retry if the selected cover file fails', async () => {
+    URL.createObjectURL = vi.fn(() => 'blob:retried-cover')
+    URL.revokeObjectURL = vi.fn()
+    vi.mocked(getHouseDetail).mockResolvedValue({ ...house, coverPhotoId: 8, photos: [{ id: 8,
+      stage: 'FOUNDATION', takenAt: null, uploadedAt: null, businessDate: null,
+      url: '/api/houses/12/photos/8/file' }] })
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(null, { status: 404 }))
+      .mockResolvedValue(new Response(new Blob(['image'], { type: 'image/png' }), {
+        status: 200, headers: { 'Content-Type': 'image/png' },
+      }))
+    vi.stubGlobal('fetch', fetchMock)
+    renderDetail()
+    expect(await screen.findByText(/Cover image could not be loaded/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Retry cover' }))
+    expect(await screen.findByRole('img', { name: 'Current cover of 12 Main St' })).toHaveAttribute('src', 'blob:retried-cover')
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   it('rejects an invalid ID without making an API request', () => {
@@ -292,7 +650,7 @@ describe('house detail page', () => {
     let resolveOld!: (value: HouseDetail) => void
     vi.mocked(getHouseDetail)
       .mockReturnValueOnce(new Promise(done => { resolveOld = done }))
-      .mockResolvedValueOnce({ ...house, id: 13, address: '13 Main St' })
+      .mockResolvedValueOnce({ ...house, id: 13, address: '13 Main St', stage: 'CO_READY' })
     const user = userEvent.setup()
     render(<MemoryRouter initialEntries={['/houses/12']}>
       <Routes>
@@ -301,10 +659,31 @@ describe('house detail page', () => {
     </MemoryRouter>)
     await user.click(screen.getByRole('link', { name: 'Next house' }))
     expect(await screen.findByRole('heading', { name: '13 Main St' })).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: 'Construction progress' })).getByText('None — final stage')).toBeInTheDocument()
     resolveOld(house)
     await waitFor(() => expect(screen.getByRole('heading', { name: '13 Main St' })).toBeInTheDocument())
     expect(screen.queryByRole('heading', { name: '12 Main St' })).not.toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: 'Construction progress' })).getByText('None — final stage')).toBeInTheDocument()
     expect(vi.mocked(getHouseDetail).mock.calls[0]?.[1]?.aborted).toBe(true)
+  })
+
+  it('hides old progress while identity changes and recalculates from the new detail', async () => {
+    let finishAdmin!: (value: HouseDetail) => void
+    vi.mocked(getHouseDetail).mockResolvedValueOnce({ ...house, photos: [{ id: 1, stage: 'FOUNDATION',
+      locationStatus: 'UNKNOWN', takenAt: null, uploadedAt: null, businessDate: null, url: null }] })
+      .mockReturnValueOnce(new Promise(resolve => { finishAdmin = resolve }))
+    const user = userEvent.setup()
+    renderDetailWithIdentity()
+    expect(await screen.findByRole('region', { name: 'Construction progress' })).toHaveTextContent('Satisfied')
+    expect(screen.queryByRole('button', { name: /Advance to Framing/ })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Use Admin' }))
+    expect(screen.getByText('Loading house details…')).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Construction progress' })).not.toBeInTheDocument()
+    await act(async () => finishAdmin({ ...house, stage: 'FRAMING', photos: [] }))
+    const progress = await screen.findByRole('region', { name: 'Construction progress' })
+    expect(progress).toHaveTextContent('Not satisfied')
+    expect(within(progress).getByRole('button', { name: /Advance unavailable/ })).toBeDisabled()
+    expect(within(progress).getAllByText('MEP')).toHaveLength(2)
   })
 
   it('clears an open photo preview when switching to another house', async () => {
@@ -319,7 +698,7 @@ describe('house detail page', () => {
     </MemoryRouter>)
     await user.click(await screen.findByRole('button', { name: 'Preview photo 1' }))
     expect(screen.getByRole('dialog')).toBeInTheDocument()
-    expect(screen.getByText(/Cover photo #8 selected/)).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Cover photo details' })).toBeInTheDocument()
     await user.click(screen.getByRole('link', { name: 'Next house' }))
     expect(await screen.findByRole('heading', { name: '13 Main St' })).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { viewerIdentity } from '../app/DemoIdentityContext'
-import { displayPhotoDate, getCommunityNames, getHouses, hasValidLocation, houseListPath, parseHouseList, sortHousesByPhotoDate, stageLabel } from './houses'
+import { displayPhotoDate, getAllHouses, getCommunityNames, getHouses, hasValidLocation, houseListPath, parseHouseList, sortHousesByPhotoDate, stageLabel } from './houses'
 import type { HouseQuery } from './houses'
 
 const query: HouseQuery = {
@@ -20,7 +20,7 @@ describe('house list API', () => {
 
     expect(await getHouses(query, undefined, viewerIdentity)).toEqual([{ id: 11, address: '101 Main St', permitNo: 'P-11',
       community: 'Austin Council District 8', lat: 30.2672, lng: -97.7431,
-      stage: 'FOUNDATION', lastPhotoBusinessDate: '2026-10-20' }])
+      stage: 'FOUNDATION', lastPhotoBusinessDate: '2026-10-20', coverPhotoUrl: null }])
     expect(fetchMock).toHaveBeenCalledOnce()
     const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
     expect(url).toBe('/api/houses?minLat=30.1&maxLat=30.5&minLng=-97.9&maxLng=-97.5')
@@ -38,6 +38,18 @@ describe('house list API', () => {
     expect(url.searchParams.get('minLat')).toBe('30.1')
     expect(url.searchParams.get('maxLng')).toBe('-97.5')
     expect(url.searchParams.has('bbox')).toBe(false)
+  })
+
+  it('reads the existing unbounded endpoint for full-catalog search, including coordinate-free houses', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify([
+      { id: 99, address: '8023 NW St', community: 'Austin Council District 8', stage: 'FOUNDATION', lat: null, lng: null },
+    ]), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    expect(await getAllHouses(undefined, viewerIdentity)).toMatchObject([
+      { id: 99, address: '8023 NW St', lat: null, lng: null },
+    ])
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/houses')
+    expect(fetchMock.mock.calls[0]?.[1].headers).toMatchObject({ 'X-Role': 'VIEWER' })
   })
 
   it('keeps records but excludes incomplete, nonnumeric and out-of-range locations', () => {
@@ -72,6 +84,18 @@ describe('house list API', () => {
       stage: null, lastPhotoBusinessDate: null })
     expect(stageLabel(house[0]?.stage ?? null)).toBe('Stage unavailable')
     expect(displayPhotoDate(house[0]?.lastPhotoBusinessDate ?? null)).toBe('No photo activity date')
+  })
+
+  it('accepts only the backend cover file URL for the same house', () => {
+    const houses = parseHouseList([
+      { id: 225, coverPhotoUrl: '/api/houses/225/photos/77/file' },
+      { id: 226, coverPhotoUrl: null },
+      { id: 227, coverPhotoUrl: '/api/houses/225/photos/77/file' },
+      { id: 228, coverPhotoUrl: 'https://example.org/photo.jpg' },
+    ])
+    expect(houses.map(house => house.coverPhotoUrl)).toEqual([
+      '/api/houses/225/photos/77/file', null, null, null,
+    ])
   })
 
   it('rejects a malformed list or invalid house ID', () => {

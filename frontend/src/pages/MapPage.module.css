@@ -11,10 +11,19 @@
 .addHouse { flex: none; display: inline-flex; align-items: center; gap: .45rem; border: 1px solid var(--color-border); border-radius: var(--radius-small); background: #edf3ed; color: var(--color-accent); padding: .45rem .6rem; font: inherit; font-size: .7rem; font-weight: 700; text-decoration: none; }
 .addHouse:hover { border-color: #9cb9a5; background: #e3eee4; }
 .addHouse:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-.infoHeader span { display: block; margin-top: .4rem; color: var(--color-muted); font-size: .7rem; line-height: 1.35; }
-.stageFilter { display: grid; gap: .4rem; margin-top: .9rem; color: var(--color-muted); font-size: .72rem; font-weight: 600; }
-.stageFilter select { width: 100%; padding: .55rem .7rem; border: 1px solid var(--color-border); border-radius: var(--radius-small); background: var(--color-surface); color: var(--color-text); font: inherit; font-size: .82rem; }
-.stageFilter select:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.filters { display: grid; gap: .7rem; margin-top: .9rem; }
+.filterRow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .7rem; }
+.filter { display: grid; min-width: 0; gap: .35rem; color: var(--color-muted); font-size: .72rem; font-weight: 600; }
+.filter > span:first-child { line-height: 1.35; }
+.filter input, .filter select { box-sizing: border-box; width: 100%; min-width: 0; padding: .55rem .7rem; border: 1px solid var(--color-border); border-radius: var(--radius-small); background: var(--color-surface); color: var(--color-text); font: inherit; font-size: .82rem; }
+.filter select { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.filter input:focus-visible, .filter select:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.searchField { display: block; min-width: 0; }
+.clearFilters { justify-self: end; border: 0; padding: .1rem 0; background: transparent; color: var(--color-accent); font: inherit; font-size: .72rem; font-weight: 650; cursor: pointer; }
+.clearFilters:hover { text-decoration: underline; }
+.clearFilters:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.filterError { margin: 0 !important; color: #8a3b32 !important; font-size: .7rem !important; font-weight: 500 !important; letter-spacing: 0 !important; line-height: 1.4; }
+.filterError button { border: 0; padding: 0; background: transparent; color: inherit; font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
 .dataStatus { flex: none; min-height: 3rem; padding: .85rem clamp(1.5rem, 3vw, 2.5rem); border-bottom: 1px solid var(--color-border); color: var(--color-muted); font-size: .8rem; }
 .dataStatus p { margin: 0; }
 .dataStatus [role='alert'] { color: #8a3b32; }

@@ -52,6 +52,14 @@
 .retry:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .photoDetails { display: block; padding: .8rem .3rem .4rem; }
 .photoNumber { display: block; margin-bottom: .7rem; font-size: .78rem; font-weight: 750; }
+.coverBadge { display: inline-block; margin: -.25rem 0 .7rem; padding: .25rem .45rem; border-radius: var(--radius-small); background: #e7f1e8; color: var(--color-accent); font-size: .68rem; font-weight: 750; }
+.setCover { margin-top: .5rem; padding: .45rem .65rem; border: 1px solid var(--color-border); border-radius: var(--radius-small); background: #edf3ed; color: var(--color-accent); font: inherit; font-size: .72rem; font-weight: 700; cursor: pointer; }
+.setCover:disabled { opacity: .55; cursor: default; }
+.setCover:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.coverFeedback { margin-top: 1rem; padding: .8rem 1rem; border: 1px solid #bdd0c0; border-radius: var(--radius-small); background: #f2f7f2; color: var(--color-text); font-size: .78rem; }
+.coverFeedback[role='alert'] { border-color: #ddb9ad; background: #f9ece7; color: #914b36; }
+.coverFeedback p { margin: 0; }
+.coverFeedback button { margin-top: .6rem; padding: .45rem .65rem; border: 1px solid var(--color-border); border-radius: var(--radius-small); background: white; color: var(--color-accent); font: inherit; font-weight: 700; cursor: pointer; }
 .facts { display: grid; gap: .45rem; margin: 0; }
 .facts > span { display: flex; flex-wrap: wrap; justify-content: space-between; gap: .2rem .55rem; }
 .facts > span > span { color: var(--color-muted); font-size: .66rem; }

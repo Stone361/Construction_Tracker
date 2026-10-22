@@ -1,0 +1,33 @@
+.card { margin: 1.25rem 0; padding: clamp(1.25rem, 2.5vw, 2rem); border: 1px solid var(--color-border); border-radius: var(--radius-large); background: var(--color-surface); box-shadow: var(--shadow-panel); }
+.heading { display: flex; align-items: start; justify-content: space-between; gap: 1rem; }
+.eyebrow { margin: 0 0 .55rem; color: var(--color-accent); font-size: .65rem; font-weight: 750; letter-spacing: .14em; }
+.heading h2 { margin: 0; font-size: 1.1rem; letter-spacing: -.02em; }
+.stageCount { color: var(--color-muted); font-size: .72rem; font-weight: 700; white-space: nowrap; }
+.steps { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: .4rem; margin: 1.65rem 0 1.5rem; padding: 0; list-style: none; }
+.step { position: relative; display: flex; flex-direction: column; gap: .5rem; min-width: 0; color: var(--color-muted); font-size: .69rem; font-weight: 650; }
+.step:not(:last-child)::after { position: absolute; top: .75rem; left: 1.8rem; right: -.15rem; height: 2px; background: var(--color-border); content: ''; }
+.past:not(:last-child)::after { background: #96b29b; }
+.stepNumber { display: grid; place-items: center; width: 1.55rem; height: 1.55rem; border: 1px solid var(--color-border); border-radius: 50%; background: var(--color-background); font-size: .65rem; }
+.stepName { overflow-wrap: anywhere; }
+.upcoming { color: var(--color-muted); }
+.past .stepNumber { border-color: #96b29b; background: #e2eee3; color: var(--color-accent); }
+.current { color: var(--color-accent); }
+.current .stepNumber { border-color: var(--color-accent); background: var(--color-accent); color: white; }
+.summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; padding-top: 1.1rem; border-top: 1px solid var(--color-border); }
+.summary > div { display: grid; gap: .3rem; }
+.summary span { color: var(--color-muted); font-size: .72rem; }
+.summary strong { font-size: .9rem; }
+.condition { margin-top: 1.3rem; padding: 1rem; border-radius: var(--radius-small); background: var(--color-background); font-size: .8rem; line-height: 1.5; }
+.condition p { margin: .45rem 0 0; }
+.condition .conditionTitle { display: flex; flex-wrap: wrap; align-items: center; gap: .7rem; margin: 0; font-weight: 700; }
+.met, .unmet { padding: .25rem .5rem; border-radius: 999px; font-size: .68rem; }
+.met { background: #dfede1; color: #245338; }
+.unmet { background: #f5e8dc; color: #76512c; }
+.condition .authority { color: var(--color-muted); font-size: .72rem; }
+.note { margin: 1rem 0 0; color: var(--color-muted); font-size: .78rem; line-height: 1.5; }
+.action { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin-top: 1rem; }
+.action button { padding: .65rem .85rem; border: 0; border-radius: var(--radius-small); background: var(--color-accent); color: white; font-size: .78rem; font-weight: 700; cursor: pointer; }
+.action button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.action button:disabled { opacity: .56; cursor: not-allowed; }
+.action span { color: var(--color-muted); font-size: .74rem; }
+@media (max-width: 680px) { .steps { gap: .3rem; } .step { font-size: .62rem; } .stepNumber { width: 1.4rem; height: 1.4rem; } }

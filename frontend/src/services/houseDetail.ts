@@ -124,3 +124,9 @@ export function displayChicagoBusinessDate(value: string | null): string {
     dateStyle: 'medium', timeZone: 'UTC',
   }).format(new Date(`${value}T00:00:00Z`))
 }
+
+export function latestPhotoBusinessDate(photos: readonly HousePhoto[]): string | null {
+  return photos.reduce<string | null>((latest, photo) =>
+    photo.businessDate !== null && (latest === null || photo.businessDate > latest)
+      ? photo.businessDate : latest, null)
+}
