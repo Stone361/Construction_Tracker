@@ -16,6 +16,10 @@ const detail = {
 const otherDetail = { ...detail, ...houses[1], id: 12, permitNo: 'P-12' }
 
 test.beforeEach(async ({ page }) => {
+  await page.route('**/api/summary', route => route.fulfill({ json: {
+    stageCounts: { LAND_CLEARING: 0, FOUNDATION: 0, FRAMING: 0, MEP: 0, INTERIOR: 0, CO_READY: 0 },
+    staleHouseIds: [],
+  } }))
   await page.route('https://tile.openstreetmap.org/**', route => route.fulfill({
     path: tilePath, contentType: 'image/svg+xml', headers: { 'access-control-allow-origin': '*' },
   }))
@@ -41,6 +45,7 @@ test('Viewer switches to Admin on Overview and keeps Admin for map house data', 
   await expect(identity).toHaveValue('ADMIN')
   await page.getByRole('main').getByRole('link', { name: 'Explore map' }).click()
   await expect(page).toHaveURL('/map')
+  await page.getByRole('tab', { name: 'House Explorer' }).click()
   await expect(identity).toHaveValue('ADMIN')
   await expect(page.locator('.leaflet-marker-icon')).toHaveCount(2)
   await expect(page.getByRole('status')).toContainText('2 houses in view · 2 map markers')
@@ -67,6 +72,7 @@ test('Site Manager uses a real community and Viewer drops the community header',
     }
   })
   await page.goto('/map')
+  await page.getByRole('tab', { name: 'House Explorer' }).click()
   await expect(page.getByRole('status')).toContainText('2 houses in view · 2 map markers')
   const identity = page.getByLabel('Demo identity')
   await identity.selectOption('SITE_MANAGER')
@@ -121,6 +127,7 @@ test('a delayed full-catalog Viewer response cannot replace Admin search results
     await route.fulfill({ json: houses })
   })
   await page.goto('/map')
+  await page.getByRole('tab', { name: 'House Explorer' }).click()
   await expect(page.getByRole('status')).toContainText('2 houses in view · 2 map markers')
   await page.getByLabel('Construction stage').selectOption('FOUNDATION')
   await expect.poll(() => oldQuery).toBeDefined()
@@ -143,6 +150,7 @@ test('create entry and upload hint follow Admin, Viewer and exact Site Manager o
     }
   })
   await page.goto('/map')
+  await page.getByRole('tab', { name: 'House Explorer' }).click()
   await expect(page.getByRole('button', { name: 'View 11 Main St' })).toBeVisible()
   const identity = page.getByLabel('Demo identity')
   await identity.selectOption('ADMIN')

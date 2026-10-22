@@ -26,10 +26,13 @@ function ResizeMap() {
   return null
 }
 
-function ResetView() {
+function ResetView({ onResetView }: { onResetView: (() => void) | undefined }) {
   const map = useMap()
   return (
-    <button className={styles.reset} type="button" onClick={() => map.setView(AUSTIN_CENTER, AUSTIN_ZOOM)}>
+    <button className={styles.reset} type="button" onClick={() => {
+      if (onResetView) onResetView()
+      else map.setView(AUSTIN_CENTER, AUSTIN_ZOOM)
+    }}>
       <Icon name="crosshair" size={18} />
       <span>Reset view</span>
     </button>
@@ -40,12 +43,13 @@ interface ConstructionMapProps {
   decorative?: boolean
   controlsVisible?: boolean
   initialView?: MapView
+  onResetView?: () => void
   children?: ReactNode
 }
 
 // Map layers are provided as children. House selection and the fixed right pane
 // belong to the map page, not this base map.
-export function ConstructionMap({ decorative = false, controlsVisible = true, initialView, children }: ConstructionMapProps) {
+export function ConstructionMap({ decorative = false, controlsVisible = true, initialView, onResetView, children }: ConstructionMapProps) {
   const [tileError, setTileError] = useState(false)
   const [loading, setLoading] = useState(true)
   const [attempt, setAttempt] = useState(0)
@@ -65,6 +69,7 @@ export function ConstructionMap({ decorative = false, controlsVisible = true, in
           className={styles.leaflet ?? ''}
           center={initialView?.center ?? AUSTIN_CENTER}
           zoom={initialView?.zoom ?? (decorative ? 11 : AUSTIN_ZOOM)}
+          zoomAnimation={false}
           minZoom={3}
           maxZoom={19}
           zoomControl={false}
@@ -94,7 +99,7 @@ export function ConstructionMap({ decorative = false, controlsVisible = true, in
           {!decorative && <>
             <ZoomControl position="bottomright" />
             <ScaleControl position="bottomleft" />
-            <ResetView />
+            <ResetView onResetView={onResetView} />
           </>}
           {children}
         </MapContainer>

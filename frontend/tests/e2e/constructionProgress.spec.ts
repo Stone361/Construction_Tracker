@@ -81,6 +81,7 @@ test('Admin confirms once; detail and the preserved stage-filtered map reread ba
   })
 
   await page.goto('/map')
+  await page.getByRole('tab', { name: 'House Explorer' }).click()
   await page.getByLabel('Demo identity').selectOption('ADMIN')
   await page.getByLabel('Construction stage').selectOption('FOUNDATION')
   await page.getByRole('button', { name: 'Open details for Progress demo, Austin, TX' }).click()

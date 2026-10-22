@@ -6,6 +6,10 @@ const existing = { id: 11, address: '11 Main St', community: 'Austin Council Dis
   permitNo: 'P-11', stage: 'FOUNDATION', lat: 30.2672, lng: -97.7431 }
 
 test.beforeEach(async ({ page }) => {
+  await page.route('**/api/summary', route => route.fulfill({ json: {
+    stageCounts: { LAND_CLEARING: 0, FOUNDATION: 0, FRAMING: 0, MEP: 0, INTERIOR: 0, CO_READY: 0 },
+    staleHouseIds: [],
+  } }))
   await page.route('https://tile.openstreetmap.org/**', route => route.fulfill({
     path: tilePath, contentType: 'image/svg+xml', headers: { 'access-control-allow-origin': '*' },
   }))
@@ -30,6 +34,7 @@ test('Admin creates a house through D and opens its independent C detail', async
     createdBusinessDate: null, createdBy: 'frontend-demo', updatedAt: null, photos: [],
   } }))
   await page.goto('/map')
+  await page.getByRole('tab', { name: 'House Explorer' }).click()
   await expect(page.getByRole('button', { name: 'View 11 Main St' })).toBeVisible()
   await page.getByLabel('Demo identity').selectOption('ADMIN')
   await page.getByRole('link', { name: 'Add house' }).click()

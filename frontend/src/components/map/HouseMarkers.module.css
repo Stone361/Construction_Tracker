@@ -20,3 +20,5 @@
 }
 
 .selected { background: #d28b36; box-shadow: 0 0 0 4px rgb(255 255 255 / 95%), 0 3px 13px rgb(21 49 33 / 42%); }
+.warning { background: #d8862d; }
+.warning.selected { background: #a95a18; box-shadow: 0 0 0 4px rgb(255 255 255 / 95%), 0 3px 13px rgb(109 58 16 / 45%); }

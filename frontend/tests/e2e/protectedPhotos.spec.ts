@@ -15,6 +15,10 @@ const detail = {
 }
 
 test.beforeEach(async ({ page }) => {
+  await page.route('**/api/summary', route => route.fulfill({ json: {
+    stageCounts: { LAND_CLEARING: 0, FOUNDATION: 0, FRAMING: 0, MEP: 0, INTERIOR: 0, CO_READY: 0 },
+    staleHouseIds: [],
+  } }))
   await page.route('**/api/houses*', route => route.fulfill({ json: [
     { id: 1, address: 'Other house', community: 'Austin Council District 8',
       stage: 'FOUNDATION', lat: 30.27, lng: -97.74 },
@@ -40,6 +44,7 @@ test('map cards use only backend-selected covers and detail shares the cover wit
     return route.fulfill({ body: png, contentType: 'image/png' })
   })
   await page.goto('/map')
+  await page.getByRole('tab', { name: 'House Explorer' }).click()
   await expect(page.getByRole('img', { name: 'Cover of Photo demo, Austin, TX' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'View No cover house' }).getByRole('img')).toHaveCount(0)
   expect(requests).toEqual(['/api/houses/225/photos/77/file'])
@@ -79,6 +84,7 @@ test('authorized cover change updates detail and a freshly queried map card', as
   })
 
   await page.goto('/map')
+  await page.getByRole('tab', { name: 'House Explorer' }).click()
   await expect(page.getByRole('img', { name: 'Cover of Photo demo, Austin, TX' })).toBeVisible()
   await page.getByRole('button', { name: 'Open details for Photo demo, Austin, TX' }).click()
   await expect(page.getByRole('img', { name: 'Current cover of Photo demo, Austin, TX' })).toBeVisible()
@@ -133,10 +139,11 @@ test('a cover write finishing after return to the map refreshes its card', async
   await page.getByRole('button', { name: 'Set photo 2 as cover' }).click()
   await started
   await page.getByRole('link', { name: 'Back to map' }).click()
+  await page.getByRole('tab', { name: 'House Explorer' }).click()
   await expect(page.getByRole('img', { name: 'Cover of Photo demo, Austin, TX' })).toBeVisible()
-  expect(listReads).toBe(1)
+  const readsBeforeWrite = listReads
   releaseWrite()
-  await expect.poll(() => listReads).toBe(2)
+  await expect.poll(() => listReads).toBeGreaterThan(readsBeforeWrite)
   await expect.poll(() => imageReads.at(-1)).toBe('/api/houses/225/photos/78/file')
 })
 

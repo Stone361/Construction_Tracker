@@ -1,0 +1,24 @@
+.root { padding: 1.15rem clamp(1.25rem, 2.5vw, 2rem) 2rem; }
+.stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; }
+.stat { display: grid; gap: .45rem; padding: 1rem 1.1rem; border: 1px solid var(--color-border); border-radius: .8rem; background: #f6f8f4; }
+.stat span { color: var(--color-muted); font-size: .72rem; font-weight: 600; }
+.stat strong { color: var(--color-text); font-size: 1.65rem; line-height: 1; }
+.attentionStat { background: #fff6e9; border-color: #f0d5ad; }
+.attentionStat strong { color: #a35616; }
+.section { margin-top: 1.55rem; }
+.section h3 { margin: 0; color: var(--color-text); font-size: .98rem; }
+.explanation { margin: .35rem 0 1rem; color: var(--color-muted); font-size: .72rem; line-height: 1.5; }
+.stages { display: grid; gap: .82rem; margin: 0; padding: 0; list-style: none; }
+.stageMeta { display: flex; justify-content: space-between; gap: 1rem; margin-bottom: .3rem; font-size: .76rem; }
+.stageMeta span:last-child { color: var(--color-muted); white-space: nowrap; }
+.track { height: .5rem; overflow: hidden; border-radius: 1rem; background: #edf2eb; }
+.track span { display: block; height: 100%; border-radius: inherit; background: #6f9980; }
+.attentionHeading { display: flex; align-items: center; justify-content: space-between; gap: .7rem; }
+.attentionHeading span { padding: .25rem .55rem; border-radius: 1rem; background: #fff0db; color: #a35616; font-size: .72rem; font-weight: 700; }
+.empty { padding: 1rem; border: 1px solid #efd5b4; border-radius: .7rem; background: #fff9f0; color: #80572c; font-size: .78rem; }
+.error { padding: .8rem 1rem; border: 1px solid #e8b9a2; border-radius: .7rem; color: #8a3b32; background: #fff6f1; font-size: .78rem; }
+.error p { margin: 0 0 .5rem; }
+.error button { border: 0; padding: 0; background: transparent; color: inherit; font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
+.list { display: grid; gap: .65rem; padding: 0; margin: 0; list-style: none; }
+.list li { min-width: 0; }
+.error button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }

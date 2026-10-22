@@ -54,7 +54,7 @@ describe('application routes', () => {
   it('supports opening the map route directly', () => {
     renderRoute('/map')
     expect(screen.getByRole('heading', { level: 1, name: 'Austin, Texas' })).toBeInTheDocument()
-    expect(screen.getByRole('searchbox', { name: 'Search address' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'Summary' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.queryByRole('searchbox', { name: 'City or ZIP code' })).not.toBeInTheDocument()
   })
 

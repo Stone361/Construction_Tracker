@@ -6,10 +6,12 @@ import { displayPhotoDate, hasValidLocation, stageLabel } from '../services/hous
 import { useProtectedImages } from '../services/useProtectedImages'
 import styles from './HouseCard.module.css'
 
-export function HouseCard({ house, onSelect, onDetails }: {
+export function HouseCard({ house, onSelect, onDetails, tone = 'default', selected = false }: {
   house: HouseSummary
   onSelect: (id: number) => void
   onDetails?: (id: number) => void
+  tone?: 'default' | 'warning'
+  selected?: boolean
 }) {
   const { identity, version } = useDemoIdentity()
   const cardRef = useRef<HTMLDivElement>(null)
@@ -29,8 +31,9 @@ export function HouseCard({ house, onSelect, onDetails }: {
   }, [visible])
   const address = house.address ?? 'Address unavailable'
   return (
-    <div className={styles.card} ref={cardRef}>
-      <button type="button" className={styles.select} onClick={() => onSelect(house.id)} aria-label={`View ${address}`}>
+    <div className={`${styles.card} ${tone === 'warning' ? styles.warning : ''} ${selected ? styles.selected : ''}`} ref={cardRef}>
+      <button type="button" className={styles.select} onClick={() => onSelect(house.id)}
+        aria-label={`View ${address}`} aria-pressed={tone === 'warning' ? selected : undefined}>
         <span className={styles.coverPlaceholder}>
           {cover?.kind === 'ready' ? <img className={styles.coverImage} src={cover.src} alt={`Cover of ${address}`} />
             : <span className={styles.coverFallback} aria-label={cover?.kind === 'error' ? 'Cover unavailable'
@@ -40,6 +43,9 @@ export function HouseCard({ house, onSelect, onDetails }: {
         </span>
         <span className={styles.content}>
           <span className={styles.address}>{address}</span>
+          <span className={styles.permit} title={house.permitNo ?? undefined}>
+            {house.permitNo ? `Permit ${house.permitNo}` : 'Permit unavailable'}
+          </span>
           <span className={styles.community}>{house.community ?? 'Area unavailable'}</span>
           <span className={styles.meta}>
             <span>{stageLabel(house.stage)}</span>

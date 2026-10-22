@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Link, MemoryRouter, Route, Routes, useLocation, useNavigate, useParams } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -9,6 +9,7 @@ import { DemoIdentityProvider } from '../app/DemoIdentityProvider'
 import { useDemoIdentity } from '../app/DemoIdentityContext'
 import { ApiError } from '../services/apiClient'
 import { getAllHouses, getHouses } from '../services/houses'
+import { getCurrentSummary } from '../services/summary'
 import type { HouseSummary } from '../services/houses'
 import { mapSnapshotFromState } from '../services/mapNavigation'
 import type { MapSnapshot } from '../services/mapNavigation'
@@ -26,24 +27,38 @@ vi.mock('../components/map/MapBoundsObserver', () => ({
 }))
 
 vi.mock('../components/map/ConstructionMap', () => ({
-  ConstructionMap: ({ children, initialView }: { children: ReactNode; initialView?: { center: [number, number]; zoom: number } }) =>
-    <section aria-label="Interactive map of Austin, Texas" data-initial-view={initialView ? `${initialView.center.join(',')}:${initialView.zoom}` : ''}>{children}</section>,
+  ConstructionMap: ({ children, initialView, onResetView }: {
+    children: ReactNode; initialView?: { center: [number, number]; zoom: number }; onResetView?: () => void
+  }) =>
+    <section aria-label="Interactive map of Austin, Texas" data-initial-view={initialView ? `${initialView.center.join(',')}:${initialView.zoom}` : ''}>
+      <button type="button" onClick={onResetView}>Reset view</button>{children}
+    </section>,
 }))
 vi.mock('../components/map/HouseMarkers', () => ({
-  HouseMarkers: ({ houses, selectedHouseId, onSelect }: {
+  HouseMarkers: ({ houses, selectedHouseId, onSelect, tone, showSelectedPopup }: {
     houses: HouseSummary[]; selectedHouseId: number | null; onSelect: (id: number) => void
+    tone?: string; showSelectedPopup?: boolean
   }) => houses.map(house => <button key={house.id} type="button"
     aria-label={`Map marker for house ${house.id}`}
     data-selected={selectedHouseId === house.id}
+    data-tone={tone ?? 'default'}
+    data-popup-open={showSelectedPopup && selectedHouseId === house.id}
     onClick={() => onSelect(house.id)} />),
 }))
 vi.mock('../components/map/MapFocusTarget', () => ({
-  MapFocusTarget: ({ request }: { request: { lat: number; lng: number } | null }) =>
-    <output data-testid="map-focus">{request ? `${request.lat},${request.lng}` : 'none'}</output>,
+  MapFocusTarget: ({ request, restoreView }: { request: { lat: number; lng: number } | null;
+    restoreView?: { center: [number, number]; zoom: number } | null }) => <>
+      <output data-testid="map-focus">{request ? `${request.lat},${request.lng}` : 'none'}</output>
+      <output data-testid="map-restore">{restoreView ? `${restoreView.center.join(',')}:${restoreView.zoom}` : 'none'}</output>
+    </>,
 }))
 vi.mock('../services/houses', async importOriginal => {
   const original = await importOriginal<typeof import('../services/houses')>()
   return { ...original, getHouses: vi.fn(), getAllHouses: vi.fn() }
+})
+vi.mock('../services/summary', async importOriginal => {
+  const original = await importOriginal<typeof import('../services/summary')>()
+  return { ...original, getCurrentSummary: vi.fn() }
 })
 
 function house(id: number, overrides: Partial<HouseSummary> = {}): HouseSummary {
@@ -53,7 +68,9 @@ function house(id: number, overrides: Partial<HouseSummary> = {}): HouseSummary 
 }
 
 function renderMap() {
-  return render(<MemoryRouter><MapPage /></MemoryRouter>)
+  const result = render(<MemoryRouter><MapPage /></MemoryRouter>)
+  fireEvent.click(screen.getByRole('tab', { name: 'House Explorer' }))
+  return result
 }
 
 function IdentitySwitch() {
@@ -75,6 +92,11 @@ beforeEach(() => {
   vi.mocked(getHouses).mockReset()
   vi.mocked(getAllHouses).mockReset()
   vi.mocked(getAllHouses).mockResolvedValue([])
+  vi.mocked(getCurrentSummary).mockReset()
+  vi.mocked(getCurrentSummary).mockResolvedValue({
+    stageCounts: { LAND_CLEARING: 0, FOUNDATION: 0, FRAMING: 0, MEP: 0, INTERIOR: 0, CO_READY: 0 },
+    staleHouseIds: [], totalHouses: 0,
+  })
 })
 
 describe('map house data and selection', () => {
@@ -82,6 +104,7 @@ describe('map house data and selection', () => {
     vi.mocked(getHouses).mockResolvedValue([])
     const user = userEvent.setup()
     render(<DemoIdentityProvider><MemoryRouter><IdentityCycle /><MapPage /></MemoryRouter></DemoIdentityProvider>)
+    fireEvent.click(screen.getByRole('tab', { name: 'House Explorer' }))
     expect(screen.queryByRole('link', { name: /Add house/ })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Use Admin' }))
     expect(screen.getByRole('link', { name: 'Add house' })).toHaveAttribute('href', '/houses/new')
@@ -96,6 +119,7 @@ describe('map house data and selection', () => {
       .mockResolvedValueOnce([house(2)])
     const user = userEvent.setup()
     render(<DemoIdentityProvider><MemoryRouter><IdentitySwitch /><MapPage /></MemoryRouter></DemoIdentityProvider>)
+    fireEvent.click(screen.getByRole('tab', { name: 'House Explorer' }))
     await screen.findByText('Loading houses from the backend…')
     await user.click(screen.getByRole('button', { name: 'Use Admin' }))
     expect(await screen.findByText('2 Main St')).toBeInTheDocument()
@@ -110,6 +134,7 @@ describe('map house data and selection', () => {
       .mockRejectedValueOnce(new ApiError('Access denied (HTTP 403).', 403))
     const user = userEvent.setup()
     render(<DemoIdentityProvider><MemoryRouter><IdentitySwitch /><MapPage /></MemoryRouter></DemoIdentityProvider>)
+    fireEvent.click(screen.getByRole('tab', { name: 'House Explorer' }))
     expect(await screen.findByText('1 Main St')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Use Admin' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('HTTP 403')
@@ -120,6 +145,7 @@ describe('map house data and selection', () => {
     vi.mocked(getHouses).mockResolvedValueOnce([house(1)]).mockResolvedValueOnce([house(2)])
     const user = userEvent.setup()
     render(<DemoIdentityProvider><MemoryRouter><IdentitySwitch /><MapPage /></MemoryRouter></DemoIdentityProvider>)
+    fireEvent.click(screen.getByRole('tab', { name: 'House Explorer' }))
     await user.click(await screen.findByRole('button', { name: 'View 1 Main St' }))
     expect(screen.getByRole('heading', { name: '1 Main St' })).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Use Admin' }))
@@ -137,6 +163,7 @@ describe('map house data and selection', () => {
       .mockResolvedValueOnce([house(4, { address: 'Latest Viewer house' })])
     const user = userEvent.setup()
     render(<DemoIdentityProvider><MemoryRouter><IdentityCycle /><MapPage /></MemoryRouter></DemoIdentityProvider>)
+    fireEvent.click(screen.getByRole('tab', { name: 'House Explorer' }))
     await waitFor(() => expect(getHouses).toHaveBeenCalledTimes(1))
     await user.click(screen.getByRole('button', { name: 'Use Admin' }))
     await waitFor(() => expect(getHouses).toHaveBeenCalledTimes(2))
@@ -178,7 +205,9 @@ describe('map house data and selection', () => {
     vi.mocked(getAllHouses).mockResolvedValue(allHouses)
     renderMap()
     expect(await screen.findByText('3 houses in view · 3 map markers')).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'House Explorer' })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: 'House Explorer' })).toBeInTheDocument()
+    expect(screen.queryByText('MAP WORKSPACE')).not.toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'House Explorer' })).not.toBeInTheDocument()
     expect(screen.queryByText('Search and filters cover all houses; clear them to browse the current map view.')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Clear filters' })).not.toBeInTheDocument()
     expect(screen.getByLabelText('Community / Area')).toHaveValue('')
@@ -251,7 +280,7 @@ describe('map house data and selection', () => {
     const header = back.closest('header')
     expect(header).not.toBeNull()
     expect(header?.firstElementChild).toBe(back)
-    expect(header).toContainElement(screen.getByText('MAP WORKSPACE'))
+    expect(header).toContainElement(screen.getByRole('heading', { name: 'House information' }))
     expect(header?.parentElement?.lastElementChild).toContainElement(screen.getByRole('heading', { name: '2 Main St' }))
     await user.click(back)
     expect(screen.getByRole('list', { name: 'House cards' })).toBeInTheDocument()
@@ -363,6 +392,7 @@ describe('map house data and selection', () => {
       <Route path="/map" element={<MapPage onSnapshotChange={onSnapshotChange} />} />
       <Route path="/houses/:id" element={<DetailProbe />} />
     </Routes></MemoryRouter>)
+    fireEvent.click(screen.getByRole('tab', { name: 'House Explorer' }))
     await screen.findByRole('button', { name: 'View 1 Main St' })
     await user.click(screen.getByRole('button', { name: 'Finish map move' }))
     await screen.findByRole('button', { name: 'View 1 Main St' })
@@ -397,6 +427,7 @@ describe('map house data and selection', () => {
       </Routes></>
     }
     render(<MemoryRouter initialEntries={['/map']}><Journey /></MemoryRouter>)
+    fireEvent.click(screen.getByRole('tab', { name: 'House Explorer' }))
     await screen.findByRole('button', { name: 'View 1 Main St' })
     await user.click(screen.getByRole('button', { name: 'Finish map move' }))
     await screen.findByRole('button', { name: 'View 1 Main St' })
@@ -409,5 +440,184 @@ describe('map house data and selection', () => {
     expect(screen.getByRole('region', { name: 'Interactive map of Austin, Texas' }))
       .toHaveAttribute('data-initial-view', '30.4,-97.6:14')
     expect(await screen.findByRole('heading', { name: '1 Main St' })).toBeInTheDocument()
+  })
+})
+
+describe('current Summary workspace', () => {
+  const stageCounts = { LAND_CLEARING: 1, FOUNDATION: 2, FRAMING: 0, MEP: 0, INTERIOR: 0, CO_READY: 0 }
+
+  it('defaults to Summary, uses backend counts and stale IDs, and keeps all warning markers on selection', async () => {
+    vi.mocked(getCurrentSummary).mockResolvedValue({ stageCounts, staleHouseIds: [2, 3], totalHouses: 3 })
+    vi.mocked(getAllHouses).mockResolvedValue([
+      house(1), house(2, { address: 'Attention house', stage: 'LAND_CLEARING' }),
+      house(3, { address: 'No coordinates', lat: null, lng: null }),
+    ])
+    const user = userEvent.setup()
+    render(<MemoryRouter><MapPage /></MemoryRouter>)
+    expect(screen.getByRole('tab', { name: 'Summary' })).toHaveAttribute('aria-selected', 'true')
+    expect(await screen.findByRole('list', { name: 'Needs Attention houses' })).toBeInTheDocument()
+    expect(screen.getByText('Total houses').parentElement).toHaveTextContent('3')
+    expect(screen.getByText('Needs attention').parentElement).toHaveTextContent('2')
+    expect(screen.getByText('No new site photos in over 14 days.')).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: 'Construction stages' }))
+      .getByText('Foundation').parentElement).toHaveTextContent('2 · 66.7%')
+    expect(screen.queryByRole('button', { name: 'Map marker for house 1' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Map marker for house 2' })).toHaveAttribute('data-tone', 'warning')
+    expect(screen.queryByRole('button', { name: 'Map marker for house 3' })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: /Open details for/ })[0]).toHaveTextContent('Open details →')
+    expect(screen.queryByText('Locate on map')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'View Attention house' }))
+    expect(screen.getByRole('button', { name: 'Map marker for house 2' })).toHaveAttribute('data-popup-open', 'true')
+    expect(screen.getByTestId('map-focus')).toHaveTextContent('30.02,-97')
+    expect(screen.getByRole('list', { name: 'Needs Attention houses' })).toHaveTextContent('No coordinates')
+    expect(getHouses).not.toHaveBeenCalled()
+  })
+
+  it('highlights the selected attention marker without removing other warning markers', async () => {
+    vi.mocked(getCurrentSummary).mockResolvedValue({ stageCounts, staleHouseIds: [1, 2], totalHouses: 3 })
+    vi.mocked(getAllHouses).mockResolvedValue([house(1), house(2), house(3)])
+    const user = userEvent.setup()
+    render(<MemoryRouter><MapPage /></MemoryRouter>)
+    await user.click(await screen.findByRole('button', { name: 'View 1 Main St' }))
+    expect(screen.getByRole('button', { name: 'Map marker for house 1' })).toHaveAttribute('data-selected', 'true')
+    expect(screen.getByRole('button', { name: 'Map marker for house 2' })).toHaveAttribute('data-tone', 'warning')
+    expect(screen.queryByRole('button', { name: 'Map marker for house 3' })).not.toBeInTheDocument()
+  })
+
+  it('keeps Explorer filters and map view separate from Summary selection', async () => {
+    vi.mocked(getCurrentSummary).mockResolvedValue({ stageCounts, staleHouseIds: [2], totalHouses: 3 })
+    vi.mocked(getAllHouses).mockResolvedValue([house(1), house(2)])
+    vi.mocked(getHouses).mockResolvedValue([house(1)])
+    const user = userEvent.setup()
+    render(<MemoryRouter><MapPage /></MemoryRouter>)
+    await screen.findByRole('button', { name: 'View 2 Main St' })
+    await user.click(screen.getByRole('tab', { name: 'House Explorer' }))
+    await screen.findByRole('button', { name: 'View 1 Main St' })
+    await user.click(screen.getByRole('button', { name: 'Finish map move' }))
+    await user.selectOptions(screen.getByLabelText('Construction stage'), 'FOUNDATION')
+    await user.type(screen.getByRole('searchbox', { name: 'Search address' }), 'main')
+    await user.click(screen.getByRole('tab', { name: 'Summary' }))
+    await user.click(screen.getByRole('button', { name: 'View 2 Main St' }))
+    expect(screen.getByTestId('map-focus')).toHaveTextContent('30.02,-97')
+    await user.click(screen.getByRole('tab', { name: 'House Explorer' }))
+    expect(screen.getByLabelText('Construction stage')).toHaveValue('FOUNDATION')
+    expect(screen.getByRole('searchbox', { name: 'Search address' })).toHaveValue('main')
+    expect(screen.getByTestId('map-restore')).toHaveTextContent('30.4,-97.6:14')
+    expect(screen.getByRole('button', { name: 'Map marker for house 1' })).toHaveAttribute('data-tone', 'default')
+  })
+
+  it('clears tab selections and popup when returning to the default Summary view', async () => {
+    vi.mocked(getCurrentSummary).mockResolvedValue({ stageCounts, staleHouseIds: [1, 2], totalHouses: 2 })
+    vi.mocked(getAllHouses).mockResolvedValue([house(1), house(2)])
+    vi.mocked(getHouses).mockResolvedValue([house(1), house(2)])
+    const user = userEvent.setup()
+    render(<MemoryRouter><MapPage /></MemoryRouter>)
+    const marker = () => screen.getByRole('button', { name: 'Map marker for house 1' })
+    await screen.findByRole('button', { name: 'View 1 Main St' })
+    expect(marker()).toHaveAttribute('data-selected', 'false')
+    expect(marker()).toHaveAttribute('data-popup-open', 'false')
+
+    await user.click(screen.getByRole('tab', { name: 'House Explorer' }))
+    await screen.findByRole('button', { name: 'View 1 Main St' })
+    await user.click(marker())
+    expect(marker()).toHaveAttribute('data-selected', 'true')
+    await user.click(screen.getByRole('button', { name: 'Finish map move' }))
+    await user.type(screen.getByRole('searchbox', { name: 'Search address' }), 'main')
+
+    await user.click(screen.getByRole('tab', { name: 'Summary' }))
+    expect(marker()).toHaveAttribute('data-selected', 'false')
+    expect(marker()).toHaveAttribute('data-popup-open', 'false')
+    expect(screen.getByTestId('map-restore')).toHaveTextContent('30.2672,-97.7431:12')
+    expect(screen.getAllByRole('button', { name: /Map marker for house/ })).toHaveLength(2)
+
+    await user.click(marker())
+    expect(marker()).toHaveAttribute('data-popup-open', 'true')
+    await user.click(screen.getByRole('tab', { name: 'House Explorer' }))
+    expect(screen.getByRole('searchbox', { name: 'Search address' })).toHaveValue('main')
+    expect(marker()).toHaveAttribute('data-selected', 'false')
+    await user.click(screen.getByRole('tab', { name: 'Summary' }))
+    expect(marker()).toHaveAttribute('data-popup-open', 'false')
+  })
+
+  it('resets the active tab view and clears its marker selection and popup', async () => {
+    vi.mocked(getCurrentSummary).mockResolvedValue({ stageCounts, staleHouseIds: [1], totalHouses: 1 })
+    vi.mocked(getAllHouses).mockResolvedValue([house(1)])
+    vi.mocked(getHouses).mockResolvedValue([house(1)])
+    const user = userEvent.setup()
+    render(<MemoryRouter><MapPage /></MemoryRouter>)
+    const marker = () => screen.getByRole('button', { name: 'Map marker for house 1' })
+    await user.click(await screen.findByRole('button', { name: 'View 1 Main St' }))
+    expect(marker()).toHaveAttribute('data-popup-open', 'true')
+    await user.click(screen.getByRole('button', { name: 'Reset view' }))
+    expect(marker()).toHaveAttribute('data-selected', 'false')
+    expect(marker()).toHaveAttribute('data-popup-open', 'false')
+    expect(screen.getByTestId('map-focus')).toHaveTextContent('none')
+    expect(screen.getByTestId('map-restore')).toHaveTextContent('30.2672,-97.7431:12')
+
+    await user.click(screen.getByRole('tab', { name: 'House Explorer' }))
+    await screen.findByRole('button', { name: 'View 1 Main St' })
+    await user.click(marker())
+    expect(marker()).toHaveAttribute('data-selected', 'true')
+    await user.click(screen.getByRole('button', { name: 'Reset view' }))
+    expect(marker()).toHaveAttribute('data-selected', 'false')
+    expect(screen.getByTestId('map-restore')).toHaveTextContent('30.2672,-97.7431:12')
+  })
+
+  it('switches the two workspace tabs with keyboard arrows', async () => {
+    vi.mocked(getHouses).mockResolvedValue([])
+    const user = userEvent.setup()
+    render(<MemoryRouter><MapPage /></MemoryRouter>)
+    screen.getByRole('tab', { name: 'Summary' }).focus()
+    await user.keyboard('{ArrowRight}')
+    expect(screen.getByRole('tab', { name: 'House Explorer' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: 'House Explorer' })).toHaveFocus()
+    await user.keyboard('{ArrowLeft}')
+    expect(screen.getByRole('tab', { name: 'Summary' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: 'Summary' })).toHaveFocus()
+  })
+
+  it('keeps no-coordinate houses accessible through their detail entry', async () => {
+    vi.mocked(getCurrentSummary).mockResolvedValue({ stageCounts, staleHouseIds: [3], totalHouses: 3 })
+    vi.mocked(getAllHouses).mockResolvedValue([house(3, { lat: null, lng: null })])
+    const user = userEvent.setup()
+    render(<MemoryRouter initialEntries={['/map']}><Routes>
+      <Route path="/map" element={<MapPage />} />
+      <Route path="/houses/:id" element={<p>House details route</p>} />
+    </Routes></MemoryRouter>)
+    await user.click(await screen.findByRole('button', { name: 'Open details for 3 Main St' }))
+    expect(screen.getByText('House details route')).toBeInTheDocument()
+  })
+
+  it('keeps backend totals visible when attention house details fail, then retries the read', async () => {
+    vi.mocked(getCurrentSummary).mockResolvedValue({ stageCounts, staleHouseIds: [1], totalHouses: 3 })
+    vi.mocked(getAllHouses).mockRejectedValueOnce(new ApiError('House list unavailable (HTTP 503).', 503))
+      .mockResolvedValueOnce([house(1)])
+    const user = userEvent.setup()
+    render(<MemoryRouter><MapPage /></MemoryRouter>)
+    expect(await screen.findByText('Total houses')).toBeInTheDocument()
+    expect(screen.getByRole('alert')).toHaveTextContent('HTTP 503')
+    expect(screen.queryByRole('button', { name: 'Map marker for house 1' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Retry house details' }))
+    expect(await screen.findByRole('button', { name: 'View 1 Main St' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Map marker for house 1' })).toBeInTheDocument()
+  })
+
+  it('distinguishes summary failures, retries, and ignores a prior identity response', async () => {
+    let resolveOld!: (value: Awaited<ReturnType<typeof getCurrentSummary>>) => void
+    vi.mocked(getCurrentSummary).mockReturnValueOnce(new Promise(done => { resolveOld = done }))
+      .mockRejectedValueOnce(new ApiError('Current summary unavailable (HTTP 503).', 503))
+      .mockResolvedValueOnce({ stageCounts, staleHouseIds: [], totalHouses: 3 })
+    const user = userEvent.setup()
+    render(<DemoIdentityProvider><MemoryRouter><IdentitySwitch /><MapPage /></MemoryRouter></DemoIdentityProvider>)
+    expect(screen.getByText('Loading current summary…')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Use Admin' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('HTTP 503')
+    resolveOld({ stageCounts, staleHouseIds: [99], totalHouses: 3 })
+    expect(screen.queryByText('99')).not.toBeInTheDocument()
+    expect(vi.mocked(getCurrentSummary).mock.calls[0]?.[0].aborted).toBe(true)
+    await user.click(screen.getByRole('button', { name: 'Retry summary' }))
+    expect(await screen.findByText('Total houses')).toBeInTheDocument()
+    expect(screen.getByText('No houses need attention in the current summary.')).toBeInTheDocument()
+    expect(vi.mocked(getCurrentSummary).mock.calls.at(-1)?.[1].role).toBe('ADMIN')
   })
 })

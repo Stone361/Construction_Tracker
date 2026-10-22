@@ -21,6 +21,10 @@ const test = base.extend<{ networkGuard: void }>({
     })
     await page.route(tilePattern, route => route.fulfill(tileResponse))
     await page.route('**/api/houses*', route => route.fulfill({ json: [] }))
+    await page.route('**/api/summary', route => route.fulfill({ json: {
+      stageCounts: { LAND_CLEARING: 0, FOUNDATION: 0, FRAMING: 0, MEP: 0, INTERIOR: 0, CO_READY: 0 },
+      staleHouseIds: [],
+    } }))
     await use()
     for (const headers of apiHeaders) {
       expect(headers['x-user']).toBe('frontend-demo')
@@ -74,6 +78,7 @@ test('landing page has honest search feedback and keyboard map navigation', asyn
   await explore.focus()
   await page.keyboard.press('Enter')
   await expect(page).toHaveURL('/map')
+  await page.getByRole('tab', { name: 'House Explorer' }).click()
   await expect(page.getByRole('heading', { name: 'Austin, Texas', level: 1 })).toBeVisible()
   await expectZoom(page, 12)
   await expect(page.getByRole('status')).toContainText('No houses in the current map view.')
@@ -162,6 +167,7 @@ test('house cards and map markers share one selection while a card focus updates
       stage: 'FRAMING', lastPhotoBusinessDate: '2026-10-21', lat: 30.3, lng: -97.7 },
   ] }))
   await page.goto('/map')
+  await page.getByRole('tab', { name: 'House Explorer' }).click()
   await expect(page.locator('.leaflet-marker-icon')).toHaveCount(2)
   await expect(page.getByRole('status')).toContainText('2 houses in view · 2 map markers')
   const list = page.getByRole('list', { name: 'House cards' })
@@ -201,6 +207,7 @@ test('full-catalog filters stay independent of map bounds and clearing restores 
     return route.fulfill({ json: url.searchParams.has('minLat') ? [inView] : [inView, remote, noCoordinates] })
   })
   await page.goto('/map')
+  await page.getByRole('tab', { name: 'House Explorer' }).click()
   await expect(page.getByRole('status')).toContainText('1 house in view · 1 map marker')
   await expect(page.getByLabel('Community / Area').locator('option')).toHaveCount(3)
   const initial = queries.find(query => query.searchParams.has('minLat'))
@@ -248,21 +255,22 @@ test('full-catalog filters stay independent of map bounds and clearing restores 
   expect(queries.at(-1)?.searchParams.get('minLat')).not.toBe(initial?.searchParams.get('minLat'))
 })
 
-test('long house list scrolls inside the right pane while the page and title stay fixed', async ({ page }) => {
+test('long house list scrolls inside the right pane while the page and filters stay fixed', async ({ page }) => {
   await page.route('**/api/houses*', route => route.fulfill({ json: Array.from({ length: 12 }, (_, index) => ({
     id: index + 1, address: `${index + 1} Main St`, community: 'Austin Council District 8',
     lastPhotoBusinessDate: null, lat: 30.2 + index / 100, lng: -97.8,
   })) }))
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/map')
+  await page.getByRole('tab', { name: 'House Explorer' }).click()
   const list = page.getByRole('list', { name: 'House cards' })
   await expect(list.getByRole('listitem')).toHaveCount(12)
-  const before = await page.getByRole('heading', { name: 'House Explorer' }).boundingBox()
+  const before = await page.getByRole('searchbox', { name: 'Search address' }).boundingBox()
   const body = list.locator('..')
   expect(await body.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
   await body.evaluate(element => { element.scrollTop = element.scrollHeight })
   await expect(list.getByRole('button', { name: 'View 12 Main St' })).toBeInViewport()
-  const after = await page.getByRole('heading', { name: 'House Explorer' }).boundingBox()
+  const after = await page.getByRole('searchbox', { name: 'Search address' }).boundingBox()
   expect(after?.y).toBe(before?.y)
   expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBe(900)
 })
@@ -273,6 +281,7 @@ test('backend failure is visible and can be retried', async ({ page }) => {
     ? route.fulfill({ status: 503, json: { code: 'UNAVAILABLE' } })
     : route.fulfill({ json: [] }))
   await page.goto('/map')
+  await page.getByRole('tab', { name: 'House Explorer' }).click()
   await expect(page.getByRole('alert')).toContainText('HTTP 503')
   await expect(page.locator('.leaflet-marker-icon')).toHaveCount(0)
   unavailable = false

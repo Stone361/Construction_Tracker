@@ -31,6 +31,7 @@ export function MapBoundsObserver({ onChange }: { onChange: (bounds: HouseBounds
   useMapEvents({ moveend: report })
 
   useEffect(() => {
+    lastBounds.current = ''
     map.whenReady(report)
   }, [map, report])
 

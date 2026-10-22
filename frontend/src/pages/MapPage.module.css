@@ -1,20 +1,28 @@
 .page { display: grid; grid-template-columns: minmax(0, 3fr) minmax(19rem, 2fr); width: 100%; height: calc(100svh - var(--header-height)); min-height: 20rem; overflow: hidden; }
 .mapPane { position: relative; min-width: 0; min-height: 0; isolation: isolate; }
 .infoPane { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border-left: 1px solid var(--color-border); background: var(--color-surface); }
+.tabs { position: relative; display: grid; grid-template-columns: 1fr 1fr; flex: none; border-bottom: 1px solid var(--color-border); }
+.tabs button { border: 0; padding: 1rem .5rem; background: transparent; color: var(--color-muted); font: inherit; font-size: .82rem; font-weight: 650; cursor: pointer; }
+.tabs button[aria-selected='true'] { color: var(--color-accent); }
+.tabs button:hover { color: var(--color-accent); }
+.tabs button:focus-visible { outline: 2px solid var(--color-focus); outline-offset: -3px; }
+.tabIndicator { position: absolute; bottom: 0; left: 0; width: 50%; height: 3px; background: var(--color-accent); transition: transform 200ms ease; pointer-events: none; }
+.tabIndicatorExplorer { transform: translateX(100%); }
+.workspacePanel { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .infoHeader { flex: none; padding: 1.25rem clamp(1.5rem, 3vw, 2.5rem) 1rem; border-bottom: 1px solid var(--color-border); }
 .backToList { display: inline-flex; align-items: center; gap: .4rem; margin: 0 0 .85rem; padding: .35rem 0; border: 0; background: transparent; color: var(--color-accent); font: inherit; font-size: .76rem; font-weight: 650; cursor: pointer; }
 .backToList:hover { text-decoration: underline; }
 .backToList:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-.infoHeader p { margin: 0 0 .45rem; color: var(--color-muted); font-size: .6rem; font-weight: 700; letter-spacing: .15em; }
 .infoHeader h2 { margin: 0; font-size: 1.35rem; font-weight: 650; letter-spacing: -.04em; }
-.infoHeadingRow { display: flex; align-items: center; justify-content: space-between; gap: .75rem; }
+.infoHeader .selectedHeading { margin-bottom: .9rem; }
 .addHouse { flex: none; display: inline-flex; align-items: center; gap: .45rem; border: 1px solid var(--color-border); border-radius: var(--radius-small); background: #edf3ed; color: var(--color-accent); padding: .45rem .6rem; font: inherit; font-size: .7rem; font-weight: 700; text-decoration: none; }
 .addHouse:hover { border-color: #9cb9a5; background: #e3eee4; }
 .addHouse:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-.filters { display: grid; gap: .7rem; margin-top: .9rem; }
+.filters { display: grid; gap: .7rem; }
+.searchHeading { display: flex; align-items: center; justify-content: space-between; gap: .75rem; min-height: 1.7rem; }
 .filterRow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .7rem; }
 .filter { display: grid; min-width: 0; gap: .35rem; color: var(--color-muted); font-size: .72rem; font-weight: 600; }
-.filter > span:first-child { line-height: 1.35; }
+.filter > span:first-child, .searchHeading label { line-height: 1.35; }
 .filter input, .filter select { box-sizing: border-box; width: 100%; min-width: 0; padding: .55rem .7rem; border: 1px solid var(--color-border); border-radius: var(--radius-small); background: var(--color-surface); color: var(--color-text); font: inherit; font-size: .82rem; }
 .filter select { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .filter input:focus-visible, .filter select:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
@@ -47,5 +55,6 @@
   .page { display: flex; flex-direction: column; height: auto; min-height: calc(100svh - var(--header-height)); overflow: visible; }
   .mapPane { height: min(58svh, 34rem); min-height: 21rem; flex: none; }
   .infoPane { border-left: 0; border-top: 1px solid var(--color-border); overflow: visible; }
+  .workspacePanel { min-height: 20rem; }
   .panelBody { overflow: visible; }
 }
