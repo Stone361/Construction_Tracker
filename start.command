@@ -1,5 +1,5 @@
 #!/bin/bash
-# Start a manual preview on its own port and stop it after the page disconnects.
+# Start the local frontend and stop it after the page disconnects.
 set -uo pipefail
 
 fail() {
@@ -21,16 +21,12 @@ npm --version >/dev/null 2>&1 || fail "npm 无法运行，请检查本机安装�
 if [[ ! -d node_modules || ! -x node_modules/.bin/vite ]]; then
   fail "前端依赖尚未就绪。请先在 frontend/ 中手动运行 npm ci，再重新启动；本脚本不会安装依赖。"
 fi
-command -v lsof >/dev/null 2>&1 || fail "未找到 lsof，无法选择空闲端口和监测页面连接。"
+command -v lsof >/dev/null 2>&1 || fail "未找到 lsof，无法检查端口占用和监测页面连接。"
 
-port=''
-for ((candidate = 5180; candidate <= 5199; candidate++)); do
-  if ! lsof -nP -iTCP:"$candidate" -sTCP:LISTEN >/dev/null 2>&1; then
-    port="$candidate"
-    break
-  fi
-done
-[[ -n "$port" ]] || fail "5180–5199 端口均被占用，请关闭不需要的本地服务后重试。"
+port=5173
+if lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+  fail "端口 5173 已被占用，请先停止占用该端口的服务。"
+fi
 url="http://localhost:$port/"
 startup_log="$(mktemp "${TMPDIR:-/tmp}/construction-tracker-vite.XXXXXX")" || fail "无法创建临时启动日志。"
 server_pid=''

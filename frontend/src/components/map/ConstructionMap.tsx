@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { MapContainer, ScaleControl, TileLayer, useMap, ZoomControl } from 'react-leaflet'
+import { MapContainer, TileLayer, useMap, ZoomControl } from 'react-leaflet'
 import { Icon } from '../Icon'
+import { SharedScaleControl } from './SharedScaleControl'
 import { AUSTIN_CENTER, AUSTIN_ZOOM, OSM_TILE_URL } from './mapSettings'
 import type { MapView } from '../../services/mapNavigation'
 import 'leaflet/dist/leaflet.css'
@@ -98,7 +99,7 @@ export function ConstructionMap({ decorative = false, controlsVisible = true, in
           />
           {!decorative && <>
             <ZoomControl position="bottomright" />
-            <ScaleControl position="bottomleft" />
+            <SharedScaleControl />
             <ResetView onResetView={onResetView} />
           </>}
           {children}

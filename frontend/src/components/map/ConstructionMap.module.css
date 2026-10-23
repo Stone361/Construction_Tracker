@@ -15,8 +15,18 @@
 .root :global(.leaflet-control-zoom a) { color: var(--color-text); width: 40px; height: 40px; line-height: 40px; }
 .root :global(.leaflet-control-zoom a:hover) { background: #eff4ef; }
 .root :global(.leaflet-control-zoom a:focus-visible) { outline-offset: -4px; }
-.root :global(.leaflet-control-scale) { margin-left: 1.5rem; margin-bottom: 1.2rem; }
-.reset, .root :global(.leaflet-control-zoom), .root :global(.leaflet-control-scale) { transition: opacity 200ms ease; }
-.controlsHidden .reset, .controlsHidden :global(.leaflet-control-zoom), .controlsHidden :global(.leaflet-control-scale) { opacity: 0; pointer-events: none; transition-duration: 400ms; }
+.sharedScale { position: absolute; z-index: 500; left: 1.5rem; bottom: 1.2rem; height: 37px; color: #2e4837; font: 600 .68rem/1 var(--font-sans); pointer-events: none; background: transparent; }
+.scaleAxis { position: absolute; top: 18px; left: 0; width: 100%; height: 1px; background: #405748; }
+.scaleOrigin { position: absolute; top: 12px; left: 0; width: 1px; height: 13px; background: #405748; }
+.scaleImperialTick, .scaleMetricTick { position: absolute; width: 1px; background: #405748; }
+.scaleImperialTick { top: 12px; height: 7px; }
+.scaleMetricTick { top: 18px; height: 7px; }
+.scaleImperialLabel, .scaleMetricLabel { position: absolute; transform: translateX(-100%); white-space: nowrap; }
+.scaleImperialLabel { top: 0; }
+.scaleMetricLabel { top: 26px; }
+.root:not(.decorative) .attribution { right: .75rem; bottom: .35rem; padding: 0; background: transparent; box-shadow: none; color: #294336; font-size: .67rem; text-shadow: 0 1px 2px rgb(255 255 255 / 90%); }
+.root:not(.decorative) .attribution a { color: #1e4636; }
+.reset, .root :global(.leaflet-control-zoom), .sharedScale { transition: opacity 200ms ease; }
+.controlsHidden .reset, .controlsHidden :global(.leaflet-control-zoom), .controlsHidden .sharedScale { opacity: 0; pointer-events: none; transition-duration: 400ms; }
 .controlsHidden .reset:focus-visible, .controlsHidden :global(.leaflet-control-zoom:focus-within) { opacity: 1; pointer-events: auto; transition-duration: 200ms; }
-@media (max-width: 600px) { .reset { top: 1rem; right: 1rem; padding: .7rem; } .notice { flex-direction: column; gap: .4rem; align-items: flex-start; width: calc(100% - 2rem); } .root :global(.leaflet-control-scale) { margin-left: 1rem; } }
+@media (max-width: 600px) { .reset { top: 1rem; right: 1rem; padding: .7rem; } .notice { flex-direction: column; gap: .4rem; align-items: flex-start; width: calc(100% - 2rem); } .sharedScale { left: 1rem; } }

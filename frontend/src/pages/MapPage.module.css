@@ -1,6 +1,6 @@
-.page { display: grid; grid-template-columns: minmax(0, 3fr) minmax(19rem, 2fr); width: 100%; height: calc(100svh - var(--header-height)); min-height: 20rem; overflow: hidden; }
+.page { display: grid; grid-template-columns: minmax(0, 3fr) minmax(19rem, 2fr); width: 100%; height: calc(100svh - var(--header-height)); min-height: 20rem; overflow: hidden; background: var(--color-background); }
 .mapPane { position: relative; min-width: 0; min-height: 0; isolation: isolate; }
-.infoPane { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; border-left: 1px solid var(--color-border); background: var(--color-surface); }
+.infoPane { display: flex; flex-direction: column; min-width: 0; min-height: 0; margin: clamp(.25rem, .4vw, .375rem); overflow: hidden; border: 1px solid rgb(224 230 220 / 65%); border-radius: var(--radius-large); background: var(--color-surface); box-shadow: 0 .4rem 1.25rem rgb(24 53 38 / 5%); }
 .tabs { position: relative; display: grid; grid-template-columns: 1fr 1fr; flex: none; border-bottom: 1px solid var(--color-border); }
 .tabs button { border: 0; padding: 1rem .5rem; background: transparent; color: var(--color-muted); font: inherit; font-size: .82rem; font-weight: 650; cursor: pointer; }
 .tabs button[aria-selected='true'] { color: var(--color-accent); }
@@ -14,7 +14,6 @@
 .backToList:hover { text-decoration: underline; }
 .backToList:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .infoHeader h2 { margin: 0; font-size: 1.35rem; font-weight: 650; letter-spacing: -.04em; }
-.infoHeader .selectedHeading { margin-bottom: .9rem; }
 .addHouse { flex: none; display: inline-flex; align-items: center; gap: .45rem; border: 1px solid var(--color-border); border-radius: var(--radius-small); background: #edf3ed; color: var(--color-accent); padding: .45rem .6rem; font: inherit; font-size: .7rem; font-weight: 700; text-decoration: none; }
 .addHouse:hover { border-color: #9cb9a5; background: #e3eee4; }
 .addHouse:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
@@ -54,7 +53,7 @@
 @media (max-width: 720px) {
   .page { display: flex; flex-direction: column; height: auto; min-height: calc(100svh - var(--header-height)); overflow: visible; }
   .mapPane { height: min(58svh, 34rem); min-height: 21rem; flex: none; }
-  .infoPane { border-left: 0; border-top: 1px solid var(--color-border); overflow: visible; }
+  .infoPane { flex: none; }
   .workspacePanel { min-height: 20rem; }
   .panelBody { overflow: visible; }
 }

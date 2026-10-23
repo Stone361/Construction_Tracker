@@ -1,27 +1,20 @@
 .page { width: 100%; min-height: calc(100svh - var(--header-height)); position: relative; isolation: isolate; display: grid; place-items: center; overflow: hidden; }
 .backdrop { position: absolute; inset: 0; z-index: -3; }
 .veil { position: absolute; inset: 0; z-index: -2; pointer-events: none; background: radial-gradient(ellipse at 50% 46%, rgb(247 249 239 / 95%) 0%, rgb(247 249 239 / 91%) 29%, rgb(243 247 235 / 52%) 65%, rgb(232 240 220 / 25%) 100%); }
-.content { text-align: center; padding: clamp(3.5rem, 9vh, 7rem) 1.5rem 6rem; width: min(100%, 58rem); }
-.eyebrow { display: flex; align-items: center; justify-content: center; gap: .6rem; margin: 0 0 1.6rem; color: #476443; font-size: .67rem; font-weight: 650; letter-spacing: .14em; text-transform: uppercase; }
-.eyebrow span { width: .35rem; height: .35rem; border-radius: 50%; background: #5b7b49; }
+.content { text-align: center; padding: clamp(3rem, 7vh, 5rem) 1.5rem 5rem; width: min(100%, 58rem); }
 .content h1 { margin: 0; font-size: clamp(2.8rem, 5.5vw, 5.2rem); font-weight: 550; line-height: 1.07; letter-spacing: -.065em; color: #1a3026; }
 .content h1 span { color: #55724c; }
 .description { margin: 1.5rem 0 0; color: #50624f; font-size: clamp(.9rem, 1.3vw, 1.02rem); line-height: 1.75; }
 .explore { display: inline-flex; align-items: center; justify-content: center; gap: 1.6rem; min-height: 3.15rem; margin-top: 1rem; padding: .8rem 1.6rem; border-radius: .65rem; color: white; background: var(--color-accent); text-decoration: none; box-shadow: 0 5px 12px rgb(25 56 38 / 12%); font-size: .83rem; font-weight: 600; transition: background .15s, transform .15s; }
 .explore:hover { background: #173e2c; transform: translateY(-1px); }
 .explore:active { transform: translateY(0); }
-.caption { margin-top: 1.7rem; color: #65755c; font-size: .55rem; font-weight: 600; letter-spacing: .15em; }
-.caption span { margin-inline: .6rem; color: #8f9a86; }
 .location { position: absolute; left: 1.8rem; bottom: 1.3rem; display: flex; align-items: center; gap: .45rem; color: #3f5941; font-size: .65rem; }
 .coordinates { margin-left: .8rem; color: #5c7057; font-size: .58rem; }
-@media (min-height: 850px) { .content { padding-block: 6rem 8rem; } }
+@media (min-height: 850px) { .content { padding-block: 5rem 6rem; } }
 @media (min-width: 701px) and (max-height: 740px) {
-  .content { padding: 1rem 1.5rem 3rem; }
+  .content { padding: 1.5rem 1.5rem 3rem; }
   .content h1 { font-size: clamp(2.5rem, 4vw, 3rem); }
-  .eyebrow { margin-bottom: .7rem; }
   .description { margin-top: .7rem; line-height: 1.5; font-size: .9rem; }
-  .desktopBreak { display: none; }
   .explore { margin-top: .25rem; }
-  .caption { margin-block: .8rem 0; }
 }
-@media (max-width: 600px) { .content { padding: 3rem 1.1rem 7rem; } .content h1 { font-size: clamp(2.6rem, 9.5vw, 3.9rem); } .eyebrow { font-size: .57rem; letter-spacing: .11em; } .location { left: 1rem; bottom: 2.4rem; } .coordinates { display: none; } .desktopBreak { display: none; } }
+@media (max-width: 600px) { .content { padding: 3rem 1.1rem 6rem; } .content h1 { font-size: clamp(2.6rem, 9.5vw, 3.9rem); } .location { left: 1rem; bottom: 2.4rem; } .coordinates { display: none; } }

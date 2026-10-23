@@ -378,12 +378,12 @@ export function MapPage({ savedSnapshot = null, onSnapshotChange, coverRevision 
           className={styles.workspacePanel}>
         {mode === 'explorer' ? <>
         <header className={styles.infoHeader}>
-          {selectedHouse && <button className={styles.backToList} type="button" onClick={() => {
+          {selectedHouseId !== null && <button className={styles.backToList} type="button" onClick={() => {
             setSelectedHouseId(null)
             setFocusRequest(null)
           }}><Icon name="arrow-left" size={16} />Back to list</button>}
-          {selectedHouse && <h2 className={styles.selectedHeading}>House information</h2>}
-          <div className={styles.filters}>
+          {selectedHouseId !== null && <h2>House information</h2>}
+          {selectedHouseId === null && <div className={styles.filters}>
             <div className={styles.filter}>
               <div className={styles.searchHeading}>
                 <label htmlFor="house-address-search">Search address</label>
@@ -434,9 +434,9 @@ export function MapPage({ savedSnapshot = null, onSnapshotChange, coverRevision 
               }}>Clear filters</button>}
             {allState.kind === 'error' && houseState.kind === 'ready' && !filtersActive &&
               <p className={styles.filterError} role="alert">Area options and search are unavailable. <button type="button" onClick={() => setRequestKey(key => key + 1)}>Retry search data</button></p>}
-          </div>
+          </div>}
         </header>
-        <div className={styles.dataStatus}>
+        {(selectedHouseId === null || houseState.kind !== 'ready') && <div className={styles.dataStatus}>
           {houseState.kind === 'loading' && <p role="status">Loading houses from the backend…</p>}
           {houseState.kind === 'error' && <div role="alert">
             <p>{houseState.message}</p>
@@ -451,7 +451,7 @@ export function MapPage({ savedSnapshot = null, onSnapshotChange, coverRevision 
                 : 'No houses in the current map view.'
               : `${visibleHouses.length} ${visibleHouses.length === 1 ? 'house' : 'houses'} ${filtersActive ? 'found' : 'in view'} · ${mappedHouses.length} map ${mappedHouses.length === 1 ? 'marker' : 'markers'}`}
           </p>}
-        </div>
+        </div>}
         <div className={styles.panelBody}>
           {houseState.kind === 'ready' && selectedHouse && <HouseInfo house={selectedHouse} onDetails={openDetails} />}
           {houseState.kind === 'ready' && !selectedHouse && visibleHouses.length > 0 &&

@@ -111,6 +111,48 @@ test('map zoom buttons, wheel, dragging and reset change the real Leaflet view',
   await expectAustinCentered(page)
 })
 
+test('shared map scale has accurate unit ticks and updates with zoom and container size', async ({ page }) => {
+  await page.goto('/map')
+  const scale = page.getByTestId('shared-map-scale')
+  await expect(scale).toBeVisible()
+  await expect(page.locator('.leaflet-control-scale')).toHaveCount(0)
+  await expect(page.getByTestId('scale-axis')).toHaveCount(1)
+
+  const measure = () => scale.evaluate(element => {
+    const label = element.getAttribute('aria-label') ?? ''
+    const match = label.match(/Map scale: ([\d.]+) (mi|ft) and ([\d.]+) (km|m)/)
+    if (!match) throw new Error(`Unexpected scale label: ${label}`)
+    const imperialMeters = Number(match[1]) * (match[2] === 'mi' ? 1609.344 : 0.3048)
+    const metricMeters = Number(match[3]) * (match[4] === 'km' ? 1000 : 1)
+    const imperial = element.querySelector<HTMLElement>('[data-testid="scale-imperial-tick"]')
+    const metric = element.querySelector<HTMLElement>('[data-testid="scale-metric-tick"]')
+    if (!imperial || !metric) throw new Error('Both unit ticks must exist')
+    return {
+      label,
+      expectedRatio: imperialMeters / metricMeters,
+      pixelRatio: parseFloat(imperial.style.left) / parseFloat(metric.style.left),
+      width: element.getBoundingClientRect().width,
+    }
+  })
+
+  const initial = await measure()
+  expect(initial.pixelRatio).toBeCloseTo(initial.expectedRatio, 4)
+  await page.getByRole('button', { name: 'Zoom in', exact: true }).click()
+  await expectZoom(page, 13)
+  await expect.poll(async () => (await measure()).label).not.toBe(initial.label)
+  const zoomed = await measure()
+  expect(zoomed.pixelRatio).toBeCloseTo(zoomed.expectedRatio, 4)
+
+  await page.locator('.leaflet-container').evaluate(element => { element.style.width = '140px' })
+  await expect.poll(async () => (await measure()).width).toBeLessThanOrEqual(92)
+  const resized = await measure()
+  expect(resized.pixelRatio).toBeCloseTo(resized.expectedRatio, 4)
+  await page.locator('.leaflet-container').evaluate(element => { element.style.width = '' })
+  await expect.poll(async () => (await measure()).width).toBeGreaterThan(92)
+  await expect(scale).toBeInViewport()
+  await expect(page.getByRole('link', { name: 'OpenStreetMap contributors' })).toBeVisible()
+})
+
 test('landing keeps the main entry visible on short desktop and narrow screens', async ({ page }) => {
   await page.goto('/')
   for (const viewport of [{ width: 1318, height: 580 }, { width: 1440, height: 900 }, { width: 390, height: 844 }]) {
@@ -175,11 +217,19 @@ test('house cards and map markers share one selection while a card focus updates
   await page.locator('.leaflet-marker-icon[title="House 11"]').click()
   await expect(page.getByRole('heading', { name: '11 Main St' })).toBeVisible()
   await expect(page.locator('.leaflet-marker-icon[title="House 11"]')).toHaveClass(/selected/)
+  await expect(page.getByRole('searchbox', { name: 'Search address' })).toHaveCount(0)
+  await expect(page.getByLabel('Community / Area')).toHaveCount(0)
+  await expect(page.getByLabel('Construction stage')).toHaveCount(0)
+  await expect(page.getByText('2 houses in view · 2 map markers')).toHaveCount(0)
   await page.locator('.leaflet-marker-icon[title="House 12"]').click()
   await expect(page.getByRole('heading', { name: '12 Main St' })).toBeVisible()
   await expect(page.locator('.leaflet-marker-icon[title="House 12"]')).toHaveClass(/selected/)
   await page.getByRole('button', { name: 'Back to list' }).click()
+  await expect(page.getByRole('searchbox', { name: 'Search address' })).toBeVisible()
+  await expect(page.getByText('2 houses in view · 2 map markers')).toBeVisible()
   await list.getByRole('button', { name: 'View 12 Main St' }).click()
+  await expect(page.getByRole('searchbox', { name: 'Search address' })).toHaveCount(0)
+  await expect(page.getByText('2 houses in view · 2 map markers')).toHaveCount(0)
   await expectZoom(page, 14)
   await expect(page.getByRole('heading', { name: '12 Main St' })).toBeVisible()
   await expect.poll(() => page.locator('.leaflet-marker-icon[title="House 12"]').evaluate(element => {
